@@ -374,6 +374,12 @@
       place();
       return Promise.resolve({ ok: true });
     }
+    if (msg.type === 'load-frame' && msg.tabId === tabId) {
+      // 普通のタブで済ませたログインから戻ってきた
+      const p = paneByFrameId(msg.frameId);
+      if (p) loadPane(p.index, msg.url);
+      return Promise.resolve({ ok: !!p });
+    }
     if (msg.type === 'escape' && msg.tabId === tabId) {
       // 枠の中のページがタブごと移ろうとした。始めた枠を探してそこで開く。
       let origin = null;

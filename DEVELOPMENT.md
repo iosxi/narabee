@@ -53,6 +53,32 @@ v2 では 1 と 2 で URL を 30 秒だけ覚え、3 で「`tabId` が -1・同�
 Service Worker がネットに出ずに Cache Storage から返すサイトは、webRequest を
 通らないので外せない (YouTube はネットに取りに行く)。
 
+### パスキー (WebAuthn) を枠に許す (v3)
+
+楽天証券の「パスキーでログイン」は `member.rakuten-sec.co.jp/app/MhLogin.do?login_type=2`
+の先で `navigator.credentials.get()` を呼び、失敗するとログイン画面に戻る。
+別 origin の iframe での WebAuthn は、埋め込む側が `allow` で
+`publickey-credentials-get` を委ねないと使えない。枠の `allow` に
+`publickey-credentials-get *; publickey-credentials-create *` を足した。
+
+| 枠の `allow` (localhost の試験ページで `credentials.get`) | 結果 |
+| --- | --- |
+| WebAuthn なし (v2) | 即座に `NotAllowedError: CredentialsContainer request is not allowed.` |
+| WebAuthn あり (v3) | 許可の確認を通り、認証器を探す段階へ進む (headless には認証器が無く `UnknownError`) |
+
+普通のタブでの対照は、headless ではフォーカスが無いため同じ `NotAllowedError` になり、
+比較に使えなかった。本物のパスキーでの成否は確かめていない。
+
+### Google のログインは普通のタブで (v3)
+
+枠の中から `accounts.google.com` を開くと、Google のサーバーが **401** を返す
+(`Error 401 (不正なリクエスト)`)。拒否ヘッダーではなく Google 側の判断なので外さない。
+board の直下の枠が `accounts.google.com` へ移ろうとしたら、`onBeforeRequest` で
+取り消して同じ URL を新しいタブで開く (枠は元のページのまま残る)。そのタブが
+`accounts.` で始まらないホストで読み込み完了したら、ログインが済んだとみなして
+タブを閉じ、その URL を枠に読み込む (google → accounts.youtube.com → youtube と渡るため)。
+対象のホストは `LOGIN_IN_TAB` に並べる。
+
 ### 枠の中の URL を追う
 
 枠は別のサイトなので `iframe.contentWindow.location` は読めない。board 自身が
@@ -95,6 +121,8 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | 先に普通のタブで YouTube を開き、Service Worker が登録された後 | v1 は `about:neterror?e=xfoBlocked`。v2 はトップ・動画・`youtube.com` (転送あり) とも表示 |
 | AdGuard AdBlocker 5.5.3.5 を入れた状態 (Service Worker なし) | 表示 (AdGuard は無関係だった) |
 | 互い違い (`zigv` / `zigh`) | 枠 1・4 が 65%、枠 2・3 が 35% |
+| 枠の中の YouTube で「ログイン」 | v2 は 401。v3 は枠が YouTube のまま、ログイン画面が新しいタブで開く |
+| ログイン用タブを YouTube の動画ページへ移す | タブが閉じ、枠に同じ動画ページが読み込まれる |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
 拡張機能のページを最上位とする iframe には効かないということ。普段のログイン状態が

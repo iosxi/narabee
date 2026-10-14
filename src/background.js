@@ -97,6 +97,56 @@
     ['blocking', 'responseHeaders']
   );
 
+  // ---- 枠では受け付けないログイン画面は、普通のタブで開く -------------------
+  //
+  // Google のログイン画面は、枠の中から開くとサーバーが 401 を返す
+  // (拒否ヘッダーではなく、サーバー側の判断なので外せない)。クッキーは
+  // 普通のタブと共通なので、ログインだけ普通のタブで済ませれば枠にも効く。
+  // 枠 (board の直下) がこうした画面へ移ろうとしたら取り消して新しいタブで開き、
+  // ログインが済んで別のサイトに戻ったら、そのタブを閉じて行き先を枠に読み込む。
+
+  const LOGIN_IN_TAB = [/^accounts\.google\.com$/];
+  /** ログイン用に開いたタブ -> { boardTabId, frameId } */
+  const loginTabs = new Map();
+
+  function needsLoginTab(url) {
+    try {
+      const host = new URL(url).hostname;
+      return LOGIN_IN_TAB.some((re) => re.test(host));
+    } catch {
+      return false;
+    }
+  }
+
+  browser.webRequest.onBeforeRequest.addListener(
+    (details) => {
+      if (details.parentFrameId !== 0 || !boards.has(details.tabId) || !needsLoginTab(details.url)) return {};
+      const { tabId, frameId, url } = details;
+      browser.tabs.create({ url, openerTabId: tabId }).then((tab) => {
+        loginTabs.set(tab.id, { boardTabId: tabId, frameId });
+      });
+      return { cancel: true };
+    },
+    { urls: ['<all_urls>'], types: ['sub_frame'] },
+    ['blocking']
+  );
+
+  browser.tabs.onUpdated.addListener((tabId, change, tab) => {
+    const login = loginTabs.get(tabId);
+    if (!login || change.status !== 'complete' || !tab.url || !/^https?:/.test(tab.url)) return;
+    // accounts.google.com → accounts.youtube.com → www.youtube.com と渡るので、
+    // accounts. で始まるホストにいる間はまだ途中とみなす
+    if (/^accounts\./.test(new URL(tab.url).hostname)) return;
+    loginTabs.delete(tabId);
+    browser.runtime
+      .sendMessage({ type: 'load-frame', tabId: login.boardTabId, frameId: login.frameId, url: tab.url })
+      .catch(() => {});
+    browser.tabs.update(login.boardTabId, { active: true }).catch(() => {});
+    browser.tabs.remove(tabId).catch(() => {});
+  });
+
+  browser.tabs.onRemoved.addListener((tabId) => loginTabs.delete(tabId));
+
   // ---- 枠の中のリンクが board ごと置き換えるのを防ぐ ----------------------
   //
   // target="_top" のリンクは、枠ではなくタブ全体を移動させてしまう。
