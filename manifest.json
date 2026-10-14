@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "narabee",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "description": "1 つのタブに 2〜4 つのサイトを並べて表示する。埋め込みを拒否しているサイトも並べられる。",
   "browser_specific_settings": {
     "gecko": {

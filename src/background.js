@@ -208,8 +208,13 @@
     return browser.tabs.create({ url: BOARD_URL });
   }
 
-  browser.browserAction.onClicked.addListener(() => {
-    showBoard();
+  // ツールバーのボタン: board を前面に出し (無ければ開き)、上の帯を出す。
+  // 帯は普段は隠れているので、出し直す手段はこのボタン。
+  browser.browserAction.onClicked.addListener(async () => {
+    const tab = await showBoard();
+    if (tab && boards.has(tab.id)) {
+      browser.runtime.sendMessage({ type: 'show-bar', tabId: tab.id }).catch(() => {});
+    }
   });
 
   // ---- 右クリックで枠に送る --------------------------------------------

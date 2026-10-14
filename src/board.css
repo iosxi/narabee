@@ -120,6 +120,26 @@ button {
   flex: 1;
 }
 
+/* 帯は普段は隠す (board.js が bar-hidden を付け外しする) */
+body.bar-hidden #bar {
+  display: none;
+}
+
+#bar-close {
+  flex: none;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+#bar-close:hover {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
 .hint {
   color: var(--muted);
   font-size: 12px;

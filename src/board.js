@@ -1,6 +1,7 @@
 (() => {
   const stage = document.getElementById('stage');
   const layoutsEl = document.getElementById('layouts');
+  const bar = document.getElementById('bar');
   const tpl = document.getElementById('pane-tpl');
 
   const ZOOM_STEPS = [0.3, 0.4, 0.5, 0.6, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -79,7 +80,10 @@
         mini.append(i);
       }
       btn.append(mini);
-      btn.addEventListener('click', () => setLayout(layout.id));
+      btn.addEventListener('click', () => {
+        setLayout(layout.id);
+        hideBar();
+      });
       layoutsEl.append(btn);
     }
   }
@@ -90,6 +94,36 @@
     place();
     saveSoon();
   }
+
+  // ---- 上の帯の表示 -----------------------------------------------------
+  //
+  // 帯は普段は隠しておく。開いた直後とツールバーのボタンを押したときに出し、
+  // レイアウトを選んだとき・× を押したとき・BAR_AUTO_HIDE_MS たったときに隠す。
+  // 帯の上にマウスがある間は数えない (離れてから数え直す)。
+
+  const BAR_AUTO_HIDE_MS = 15000;
+  let barTimer = null;
+
+  function armBarTimer() {
+    clearTimeout(barTimer);
+    barTimer = setTimeout(hideBar, BAR_AUTO_HIDE_MS);
+  }
+
+  function showBar() {
+    document.body.classList.remove('bar-hidden');
+    if (!bar.matches(':hover')) armBarTimer();
+  }
+
+  function hideBar() {
+    clearTimeout(barTimer);
+    document.body.classList.add('bar-hidden');
+  }
+
+  bar.addEventListener('pointerenter', () => clearTimeout(barTimer));
+  bar.addEventListener('pointerleave', () => {
+    if (!document.body.classList.contains('bar-hidden')) armBarTimer();
+  });
+  document.getElementById('bar-close').addEventListener('click', hideBar);
 
   // ---- 枠 ---------------------------------------------------------------
 
@@ -444,6 +478,10 @@
 
   browser.runtime.onMessage.addListener((msg, sender) => {
     if (!msg) return undefined;
+    if (msg.type === 'show-bar' && msg.tabId === tabId) {
+      showBar();
+      return Promise.resolve({ ok: true });
+    }
     if (msg.type === 'frame-scroll') {
       recordScroll(msg, sender);
       return undefined;
@@ -496,6 +534,7 @@
     tabId = hello && hello.tabId;
     state = await NarabeeState.load();
     buildLayoutButtons();
+    showBar();
     for (let i = 0; i < NarabeeState.MAX_PANES; i += 1) panes.push(createPane(i));
     place();
     for (const p of panes) {

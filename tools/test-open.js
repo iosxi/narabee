@@ -21,3 +21,14 @@
     browser.runtime.sendMessage({ type: 'load', index: Number(q.get('i')), url: q.get('url') });
   });
 })();
+
+/** .../show-bar を開くと、ツールバーのボタンを押したときと同じ「帯を出す」指示を board に送る。 */
+(() => {
+  browser.webNavigation.onCompleted.addListener(async (d) => {
+    if (d.frameId !== 0 || !d.url.includes('/show-bar')) return;
+    const base = browser.runtime.getURL('src/board.html');
+    for (const tab of await browser.tabs.query({})) {
+      if (tab.url && tab.url.startsWith(base)) browser.runtime.sendMessage({ type: 'show-bar', tabId: tab.id });
+    }
+  });
+})();
