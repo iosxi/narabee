@@ -192,30 +192,55 @@
     if (change.url && !isBoardUrl(change.url)) boards.delete(tabId);
   });
 
-  /** 開いている board があれば前面に出し、無ければ開く。 */
-  async function showBoard() {
+  // board はウィンドウごとに持つ。ツールバーのボタンや右クリックは、押したウィンドウの
+  // board だけを相手にする (v8 までは最初に見つかった board を相手にしていたので、
+  // ウィンドウ 2 で押すとウィンドウ 1 の board に帯が出ていた)。
+
+  /** そのウィンドウにある board のタブ。無ければ null。 */
+  async function boardInWindow(windowId) {
     for (const tabId of boards) {
       try {
         const tab = await browser.tabs.get(tabId);
-        if (!isBoardUrl(tab.url)) continue;
-        await browser.tabs.update(tabId, { active: true });
-        await browser.windows.update(tab.windowId, { focused: true });
-        return tab;
+        if (isBoardUrl(tab.url) && tab.windowId === windowId) return tab;
+        if (!isBoardUrl(tab.url)) boards.delete(tabId);
       } catch {
         boards.delete(tabId);
       }
     }
-    return browser.tabs.create({ url: BOARD_URL });
+    return null;
   }
 
-  // ツールバーのボタン: board を前面に出し (無ければ開き)、上の帯を出す。
-  // 帯は普段は隠れているので、出し直す手段はこのボタン。
-  browser.browserAction.onClicked.addListener(async () => {
-    const tab = await showBoard();
-    if (tab && boards.has(tab.id)) {
-      browser.runtime.sendMessage({ type: 'show-bar', tabId: tab.id }).catch(() => {});
+  /** 新しい board の識別子 (board の URL の ?b=、保存先の区別に使う) */
+  function newBoardId() {
+    return crypto.randomUUID().slice(0, 8);
+  }
+
+  /**
+   * そのウィンドウの board を前面に出す。無ければそのウィンドウに開く。
+   * 開いたときは { tab, created: true, boardId }。
+   */
+  async function showBoard(windowId) {
+    const tab = await boardInWindow(windowId);
+    if (tab) {
+      await browser.tabs.update(tab.id, { active: true });
+      return { tab, created: false };
     }
-  });
+    const boardId = newBoardId();
+    const created = await browser.tabs.create({ url: BOARD_URL + '?b=' + boardId, windowId, active: true });
+    return { tab: created, created: true, boardId };
+  }
+
+  /** ツールバーのボタン: そのウィンドウの board を前面に出し (無ければ開き)、上の帯を出す。 */
+  async function onToolbarClick(windowId) {
+    const { tab, created } = await showBoard(windowId);
+    // 開いたばかりの board は自分で帯を出す
+    if (!created) browser.runtime.sendMessage({ type: 'show-bar', tabId: tab.id }).catch(() => {});
+  }
+
+  browser.browserAction.onClicked.addListener((tab) => onToolbarClick(tab.windowId));
+
+  // 動作テスト (tools/test-open.js) からツールバーのボタンと同じ処理を呼ぶための口
+  globalThis.narabeeToolbarClick = onToolbarClick;
 
   // ---- 右クリックで枠に送る --------------------------------------------
 
@@ -252,28 +277,29 @@
     if (!Number.isInteger(index)) return;
     const url = parentId === MENU_LINK ? info.linkUrl : (tab && tab.url) || info.pageUrl;
     if (!url || !/^https?:/.test(url)) return;
-    await sendToPane(index, url);
+    await sendToPane(index, url, tab ? tab.windowId : browser.windows.WINDOW_ID_CURRENT);
   });
 
   /**
-   * board が開いていれば board に読み込ませる (状態の持ち主は board)。
-   * 開いていなければ保存してから board を開く。
+   * そのウィンドウの board に読み込ませる (状態の持ち主は board)。
+   * board が無ければ、新しい board の保存先に書いてから開く。
    */
-  async function sendToPane(index, url) {
-    let delivered = false;
-    if (boards.size > 0) {
-      try {
-        const r = await browser.runtime.sendMessage({ type: 'load', index, url });
-        delivered = !!(r && r.ok);
-      } catch {
-        delivered = false;
-      }
+  async function sendToPane(index, url, windowId) {
+    const existing = await boardInWindow(windowId);
+    if (existing) {
+      await browser.runtime.sendMessage({ type: 'load', tabId: existing.id, index, url }).catch(() => {});
+      await browser.tabs.update(existing.id, { active: true });
+      return;
     }
-    if (!delivered) {
-      const state = await NarabeeState.load();
-      state.panes[index].url = url;
-      await NarabeeState.save(state);
-    }
-    await showBoard();
+    const boardId = newBoardId();
+    const state = NarabeeState.blank();
+    state.panes[index].url = url;
+    if (index > 1) state.layout = index === 2 ? 'h3' : 'g22';
+    else state.layout = index === 1 ? 'h2' : 'one';
+    await NarabeeState.save(state, boardId);
+    await browser.tabs.create({ url: BOARD_URL + '?b=' + boardId, windowId, active: true });
   }
+
+  // 動作テスト (tools/test-open.js) から右クリックの「枠に送る」と同じ処理を呼ぶための口
+  globalThis.narabeeSendToPane = sendToPane;
 })();

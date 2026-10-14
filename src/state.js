@@ -40,13 +40,23 @@ var NarabeeState = (() => {
     return s;
   }
 
-  async function load() {
-    const got = await browser.storage.local.get(KEY);
-    return normalize(got[KEY]);
+  /**
+   * board ごとの保存先。ウィンドウごとに別の board を開けるよう、board の URL に
+   * ?b=<識別子> を付けて区別する。識別子の無い board (v8 までに開いたもの) は
+   * これまでどおり 'state' を使う。
+   */
+  function keyFor(boardId) {
+    return boardId ? KEY + ':' + boardId : KEY;
   }
 
-  function save(state) {
-    return browser.storage.local.set({ [KEY]: state });
+  async function load(boardId) {
+    const key = keyFor(boardId);
+    const got = await browser.storage.local.get(key);
+    return normalize(got[key]);
+  }
+
+  function save(state, boardId) {
+    return browser.storage.local.set({ [keyFor(boardId)]: state });
   }
 
   return { MAX_PANES, blank, normalize, load, save };

@@ -116,6 +116,23 @@ Web のページの `onCommitted` で、`executeScript` (`document_idle`) から
 題名を消すのは枠を空にしたときだけ。`#` の変化やページ内の切り替えでは題名の
 知らせが来ないので、URL が変わったからといって消すと題名が空のままになる。
 
+### ウィンドウごとの board (v9)
+
+v8 までは board がブラウザ全体で 1 つの前提で、ツールバーのボタンは最初に見つかった
+board を前面に出していた。ウィンドウ 2 で押すとウィンドウ 1 の board に帯が出ていた。
+
+- ツールバーのボタンと右クリックの「枠に送る」は、押したウィンドウの board
+  (`boardInWindow(windowId)`) だけを相手にする。無ければそのウィンドウに開く。
+- 保存先は board ごと。新しく開く board の URL に `?b=<8 桁>` を付け、
+  `storage.local` の `state:<識別子>` に保存する。URL に入れておくので、Firefox が
+  タブを復元すれば同じ保存先に戻る。識別子の無い board (v8 までに開いたもの) は
+  これまでどおり `state` を使う。
+- 背景から board への `load` は `tabId` を付けて宛先を決める (付いていないものは
+  試験用の入口からの指示で、どの board も受ける)。
+- 閉じた board の保存内容は消さない (閉じたタブを開き直したときに戻せるように)。
+- 動作テストのため、背景はボタンと「枠に送る」の処理を `globalThis.narabeeToolbarClick` /
+  `narabeeSendToPane` として公開している (`tools/test-open.js` の `/toolbar`、`/menu-send` が呼ぶ)。
+
 ### 枠の中の URL を追う
 
 枠は別のサイトなので `iframe.contentWindow.location` は読めない。board 自身が
@@ -218,6 +235,9 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | 題名: 枠 1 が nikkei225jp | `narabee(225先物 CME SGX 大取 夜間 リアルタイム チャート)` |
 | 題名: 2.5 秒後に題名を変えるページ | 1.5 秒で `narabee(はじめの題名)`、4.5 秒で `narabee(あとの題名)` |
 | 題名: 枠 1 を × で閉じる | `narabee` |
+| ウィンドウ 2 でボタン (初回) | ウィンドウ 2 に `?b=` 付きの board が開き帯が出る。ウィンドウ 1 の帯は隠れたまま |
+| ウィンドウ 2 で「枠 2 に送る」 / ウィンドウ 1 でボタン | ウィンドウ 2 の枠 2 だけに入る / ウィンドウ 1 の帯だけが出る |
+| 保存先 / ウィンドウ 2 の board を読み直す | `state` と `state:<識別子>` に分かれる / 自分の内容で戻る |
 | v5 で nikkei225jp / 楽天の公開ページ / YouTube | 固まらず表示 (`parent` は元のまま) |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が

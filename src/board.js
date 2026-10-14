@@ -9,6 +9,8 @@
   /** 見出しのボタンを間引き始める枠の幅 */
   const NARROW_PX = 380;
 
+  /** この board の識別子 (URL の ?b=)。無ければ v8 までの board と同じ保存先を使う */
+  const boardId = new URLSearchParams(location.search).get('b') || '';
   let state = NarabeeState.blank();
   let tabId = null;
   /** その枠だけを大きくしているときの枠の番号。していなければ null。 */
@@ -21,12 +23,12 @@
   let saveTimer = null;
   function saveSoon() {
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => NarabeeState.save(state), 300);
+    saveTimer = setTimeout(() => NarabeeState.save(state, boardId), 300);
   }
   window.addEventListener('pagehide', () => {
     if (saveTimer) {
       clearTimeout(saveTimer);
-      NarabeeState.save(state);
+      NarabeeState.save(state, boardId);
     }
   });
 
@@ -513,7 +515,8 @@
       recordScroll(msg, sender);
       return undefined;
     }
-    if (msg.type === 'load' && Number.isInteger(msg.index) && panes[msg.index]) {
+    // tabId が付いていれば、その board 宛て (ウィンドウごとに board があるため)
+    if (msg.type === 'load' && Number.isInteger(msg.index) && panes[msg.index] && (msg.tabId === undefined || msg.tabId === tabId)) {
       ensureVisible(msg.index);
       loadPane(msg.index, msg.url);
       place();
@@ -559,7 +562,7 @@
   async function init() {
     const hello = await browser.runtime.sendMessage({ type: 'board-hello' });
     tabId = hello && hello.tabId;
-    state = await NarabeeState.load();
+    state = await NarabeeState.load(boardId);
     buildLayoutButtons();
     showBar();
     for (let i = 0; i < NarabeeState.MAX_PANES; i += 1) panes.push(createPane(i));

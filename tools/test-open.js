@@ -32,3 +32,19 @@
     }
   });
 })();
+
+/**
+ * .../toolbar を開くと、そのタブのウィンドウでツールバーのボタンを押したのと同じ処理を呼ぶ。
+ * .../menu-send?i=<枠>&url=<URL> を開くと、そのウィンドウで右クリックの「枠に送る」と同じ処理を呼ぶ。
+ */
+(() => {
+  browser.webNavigation.onCompleted.addListener(async (d) => {
+    if (d.frameId !== 0) return;
+    const tab = await browser.tabs.get(d.tabId);
+    if (d.url.includes('/toolbar')) globalThis.narabeeToolbarClick(tab.windowId);
+    if (d.url.includes('/menu-send')) {
+      const q = new URL(d.url).searchParams;
+      globalThis.narabeeSendToPane(Number(q.get('i')), q.get('url'), tab.windowId);
+    }
+  });
+})();
