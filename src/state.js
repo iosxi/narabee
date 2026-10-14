@@ -14,7 +14,8 @@ var NarabeeState = (() => {
       layout: 'g22',
       /** sizes[レイアウトID][分割の経路] = 子の比率 (合計 1) */
       sizes: {},
-      panes: Array.from({ length: MAX_PANES }, () => ({ url: '', zoom: 1 })),
+      /** scroll は board を読み直したときに戻すスクロール位置 ({ url, x, y } か null) */
+      panes: Array.from({ length: MAX_PANES }, () => ({ url: '', zoom: 1, scroll: null })),
     };
   }
 
@@ -30,6 +31,10 @@ var NarabeeState = (() => {
         if (!p) continue;
         if (typeof p.url === 'string') s.panes[i].url = p.url;
         if (typeof p.zoom === 'number' && p.zoom > 0) s.panes[i].zoom = p.zoom;
+        const sc = p.scroll;
+        if (sc && typeof sc.url === 'string' && Number.isFinite(sc.x) && Number.isFinite(sc.y)) {
+          s.panes[i].scroll = { url: sc.url, x: sc.x, y: sc.y };
+        }
       }
     }
     return s;

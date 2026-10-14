@@ -368,8 +368,69 @@
   }
 
   browser.webNavigation.onCommitted.addListener(onNavigated);
+  browser.webNavigation.onCommitted.addListener(restoreScrollOnCommit);
   browser.webNavigation.onHistoryStateUpdated.addListener(onNavigated);
   browser.webNavigation.onReferenceFragmentUpdated.addListener(onNavigated);
+
+  // ---- スクロール位置の記録と復元 -----------------------------------------
+  //
+  // board を開くと、枠には保存した URL を読み込み直す。普通のタブを読み直した
+  // ときのような位置の復元は効かないので、frame.js が知らせる位置を覚えておき、
+  // 同じ URL が読み込まれたら戻す。後から中身が伸びるページもあるので、届くまで
+  // しばらくやり直す。途中で利用者が動かしたら、そこでやめる。
+
+  const RESTORE_TRIES = 40;
+  const RESTORE_INTERVAL_MS = 150;
+
+  function restoreCode(x, y) {
+    return `new Promise((done) => {
+      let stop = false;
+      const quit = () => { stop = true; };
+      for (const ev of ['wheel', 'keydown', 'touchstart', 'mousedown']) {
+        window.addEventListener(ev, quit, { once: true, capture: true });
+      }
+      let n = 0;
+      const tick = () => {
+        if (stop) return done(false);
+        window.scrollTo(${x}, ${y});
+        n += 1;
+        const reached = Math.abs(window.scrollY - ${y}) < 2 && Math.abs(window.scrollX - ${x}) < 2;
+        if (reached || n >= ${RESTORE_TRIES}) return done(reached);
+        setTimeout(tick, ${RESTORE_INTERVAL_MS});
+      };
+      tick();
+    })`;
+  }
+
+  function restoreScrollOnCommit(details) {
+    if (details.tabId !== tabId || details.frameId === 0) return;
+    // 枠を作った直後の about:blank の読み込みも届くので、Web のページだけを見る
+    if (!/^https?:/.test(details.url)) return;
+    const p = paneByFrameId(details.frameId);
+    if (!p || !p.pendingScroll) return;
+    const sc = p.pendingScroll;
+    p.pendingScroll = null;
+    if (details.url !== sc.url) {
+      p.restoring = false;
+      return;
+    }
+    browser.tabs
+      .executeScript(tabId, { frameId: details.frameId, code: restoreCode(sc.x, sc.y), runAt: 'document_idle' })
+      .catch(() => {})
+      .finally(() => {
+        p.restoring = false;
+      });
+  }
+
+  function recordScroll(msg, sender) {
+    if (!sender.tab || sender.tab.id !== tabId) return;
+    const p = paneByFrameId(sender.frameId);
+    // 戻している途中の位置は、戻し終わるまで記録しない (0 で上書きしないため)
+    if (!p || p.restoring) return;
+    if (!Number.isFinite(msg.x) || !Number.isFinite(msg.y) || typeof msg.url !== 'string') return;
+    state.panes[p.index].scroll = { url: msg.url, x: msg.x, y: msg.y };
+    saveSoon();
+  }
 
   // ---- 背景からの指示 ---------------------------------------------------
 
@@ -381,8 +442,12 @@
     setLayout(['one', 'h2', 'h3', 'g22'][index] || 'g22');
   }
 
-  browser.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg, sender) => {
     if (!msg) return undefined;
+    if (msg.type === 'frame-scroll') {
+      recordScroll(msg, sender);
+      return undefined;
+    }
     if (msg.type === 'load' && Number.isInteger(msg.index) && panes[msg.index]) {
       ensureVisible(msg.index);
       loadPane(msg.index, msg.url);
@@ -437,6 +502,11 @@
       applyZoom(p);
       const url = state.panes[p.index].url;
       showUrl(p, url);
+      const sc = state.panes[p.index].scroll;
+      if (url && sc && sc.url === url && (sc.x || sc.y)) {
+        p.pendingScroll = sc;
+        p.restoring = true;
+      }
       if (url) p.iframe.src = url;
     }
   }

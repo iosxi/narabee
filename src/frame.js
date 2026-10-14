@@ -63,6 +63,24 @@
   // 読み込みの途中に定義される関数も、これなら取りこぼさない。
   document.addEventListener('click', wrapJumps, true);
 
+  // スクロール位置を board に知らせる。board を読み直したとき (と次に開いたとき) に
+  // 枠のページは保存した URL から読み込み直されるので、普通のタブのような位置の
+  // 復元が効かない。board が位置を覚えておき、読み込み後に戻す。
+  let scrollTimer = null;
+  window.addEventListener(
+    'scroll',
+    () => {
+      if (scrollTimer) return;
+      scrollTimer = setTimeout(() => {
+        scrollTimer = null;
+        browser.runtime
+          .sendMessage({ type: 'frame-scroll', url: location.href, x: Math.round(window.scrollX), y: Math.round(window.scrollY) })
+          .catch(() => {});
+      }, 250);
+    },
+    { passive: true }
+  );
+
   const ESCAPING = /^_(top|parent)$/i;
   const ATTRS = ['target', 'formtarget'];
   const SELECTOR = 'a[target], area[target], form[target], base[target], button[formtarget], input[formtarget]';

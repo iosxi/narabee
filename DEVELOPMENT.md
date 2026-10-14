@@ -79,6 +79,25 @@ board の直下の枠が `accounts.google.com` へ移ろうとしたら、`onBef
 タブを閉じ、その URL を枠に読み込む (google → accounts.youtube.com → youtube と渡るため)。
 対象のホストは `LOGIN_IN_TAB` に並べる。
 
+### スクロール位置を覚えて戻す (v6)
+
+board を開く (読み直す) と、枠には保存した URL を `iframe.src` で読み込み直すので、
+普通のタブを読み直したときのような位置の復元は効かない。`frame.js` が `scroll` を
+250ms ごとにまとめて `{ type: 'frame-scroll', url, x, y }` で知らせ、board が
+`sender.frameId` から枠を引いて `state.panes[i].scroll` に保存する。
+
+board を開いたとき、保存した URL と `scroll.url` が同じ枠は、その枠の最初の
+Web のページの `onCommitted` で、`executeScript` (`document_idle`) から
+`scrollTo` を 150ms ごとに最大 40 回やり直す。後から中身が伸びるページにも届く。
+`wheel` / `keydown` / `touchstart` / `mousedown` が来たらやめる。戻し終わるまでは
+その枠の位置を記録しない (読み込み直後の 0 で上書きしないため)。
+
+- 枠を作った直後の `about:blank` の `onCommitted` も届く。これを「別の URL が
+  読み込まれた」と扱うと復元をやめてしまうので、Web のページだけを見る。
+- 楽天証券のログイン画面は `window.onload` でログイン ID の欄に焦点を移し、
+  その欄が見える位置まで動く。ページの意図なので逆らわない。
+- 枠ごとの ↻ は `location.reload()` なので、Firefox が自分で位置を保つ。
+
 ### 枠の中の URL を追う
 
 枠は別のサイトなので `iframe.contentWindow.location` は読めない。board 自身が
@@ -172,6 +191,9 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | 楽天と同じ作りのメニュー (`memberPageJump`) | v4 は `SecurityError` を握りつぶして何も起きない。v5 は枠の中で移動先へ |
 | v5 の差し替えの前後の `parent === window` | 呼ぶ前 false、実行中 true、呼んだ後 false (2 回目も同じ) |
 | クリック 3 回の前後の `memberPageJump` | 同じ関数のまま (包み直さない) |
+| board を読み直す (2500 / 1.5 秒後に伸びるページで 3000 / 動かしていない枠) | 1 秒後 2500 / 0 / 0、6 秒後 2500 / 3000 / 0 |
+| 同じく nikkei225jp (1500) / 楽天ログイン画面 (800) | 1 秒後 1500 / 800。楽天は onload の焦点移動で 234 へ動く |
+| 戻した後に利用者がスクロール (1200) | 1200 が記録される |
 | v5 で nikkei225jp / 楽天の公開ページ / YouTube | 固まらず表示 (`parent` は元のまま) |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
