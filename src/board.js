@@ -221,10 +221,96 @@
     if (dir > 0) i = ZOOM_STEPS[i] > z + 1e-6 ? i : i + 1;
     else i -= 1;
     i = Math.max(0, Math.min(ZOOM_STEPS.length - 1, i));
-    state.panes[p.index].zoom = ZOOM_STEPS[i];
+    setZoom(p, ZOOM_STEPS[i]);
+  }
+
+  function setZoom(p, z) {
+    state.panes[p.index].zoom = z;
     applyZoom(p);
     saveSoon();
   }
+
+  // ---- 倍率のダイアログ ---------------------------------------------------
+  //
+  // 見出しの倍率 (「100%」) を押すと開く。入力した値はすぐには反映せず、「セット」
+  // (Enter) で反映して閉じる。「リセット」は 100% にして閉じる。× ・Esc・
+  // ダイアログの外を押す (枠の中のページを押すと board から焦点が外れる) と、
+  // 入力を捨てて閉じる。
+
+  const ZOOM_MIN = 10;
+  const ZOOM_MAX = 500;
+  const zoomDialog = document.getElementById('zoom-dialog');
+  const zoomForm = zoomDialog.querySelector('form');
+  const zoomInput = zoomDialog.querySelector('.zd-input');
+  const zoomError = zoomDialog.querySelector('.zd-error');
+  /** ダイアログを開いている枠。閉じていれば null */
+  let zoomTarget = null;
+
+  function openZoomDialog(p) {
+    if (zoomTarget === p) {
+      closeZoomDialog();
+      return;
+    }
+    zoomTarget = p;
+    zoomInput.value = String(Math.round(state.panes[p.index].zoom * 100));
+    zoomError.hidden = true;
+    zoomDialog.hidden = false;
+    // 倍率のボタンの下に出す。画面からはみ出すなら内側に寄せる
+    const r = p.zoomBtn.getBoundingClientRect();
+    const w = zoomDialog.offsetWidth;
+    const h = zoomDialog.offsetHeight;
+    const left = Math.max(4, Math.min(window.innerWidth - w - 4, r.left + r.width / 2 - w / 2));
+    const top = r.bottom + 4 + h > window.innerHeight ? Math.max(4, r.top - h - 4) : r.bottom + 4;
+    zoomDialog.style.left = left + 'px';
+    zoomDialog.style.top = top + 'px';
+    zoomInput.focus();
+    zoomInput.select();
+  }
+
+  function closeZoomDialog() {
+    zoomTarget = null;
+    // 見えなくなった入力欄に焦点を残さない
+    if (zoomDialog.contains(document.activeElement)) document.activeElement.blur();
+    zoomDialog.hidden = true;
+  }
+
+  zoomForm.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!zoomTarget) return;
+    const v = Number(zoomInput.value.trim());
+    if (!Number.isFinite(v) || v < ZOOM_MIN || v > ZOOM_MAX) {
+      zoomError.textContent = ZOOM_MIN + '〜' + ZOOM_MAX + ' の数で入れてください';
+      zoomError.hidden = false;
+      zoomInput.focus();
+      zoomInput.select();
+      return;
+    }
+    setZoom(zoomTarget, v / 100);
+    closeZoomDialog();
+  });
+  zoomDialog.querySelector('.zd-reset').addEventListener('click', () => {
+    if (zoomTarget) setZoom(zoomTarget, 1);
+    closeZoomDialog();
+  });
+  zoomDialog.querySelector('.zd-close').addEventListener('click', closeZoomDialog);
+  zoomDialog.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') closeZoomDialog();
+  });
+  // ダイアログの外を押したら閉じる。同じ枠の倍率のボタンなら、そのボタンの
+  // クリックが閉じる (openZoomDialog が開いている枠と同じなら閉じる)
+  document.addEventListener(
+    'pointerdown',
+    (ev) => {
+      if (!zoomTarget || zoomDialog.contains(ev.target)) return;
+      if (ev.target instanceof Element && ev.target.closest('.zoom') === zoomTarget.zoomBtn) return;
+      closeZoomDialog();
+    },
+    true
+  );
+  // 枠の中のページを押すと、board から焦点が外れる (board には pointerdown が来ない)
+  window.addEventListener('blur', () => {
+    if (zoomTarget) closeZoomDialog();
+  });
 
   /** 枠の中の履歴を動かす。枠の中は別のサイトなので、差し込んだスクリプトで行う。 */
   async function runInFrame(p, code) {
@@ -256,10 +342,8 @@
       case 'zoomout':
         stepZoom(p, -1);
         break;
-      case 'zoomreset':
-        state.panes[p.index].zoom = 1;
-        applyZoom(p);
-        saveSoon();
+      case 'zoomdialog':
+        openZoomDialog(p);
         break;
       case 'max':
         toggleMax(p.index);

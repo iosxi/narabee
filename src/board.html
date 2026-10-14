@@ -16,6 +16,19 @@
 </div>
 <div id="stage"></div>
 
+<div id="zoom-dialog" class="zoom-dialog" role="dialog" aria-label="表示倍率" hidden>
+  <button type="button" class="zd-close" title="閉じる (入力は捨てる)">×</button>
+  <form class="zd-form">
+    <label class="zd-label">表示倍率</label>
+    <div class="zd-row">
+      <input class="zd-input" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" aria-label="表示倍率 (%)"><span class="zd-unit">%</span>
+      <button type="submit" class="zd-set">セット</button>
+      <button type="button" class="zd-reset" title="100% に戻す">リセット</button>
+    </div>
+    <p class="zd-error" hidden></p>
+  </form>
+</div>
+
 <template id="pane-tpl">
   <section class="pane">
     <header>
@@ -25,7 +38,7 @@
       <button type="button" data-act="reload" title="再読み込み">↻</button>
       <form class="go"><input class="url" type="text" spellcheck="false" autocomplete="off" placeholder="URL を入力して Enter"></form>
       <button type="button" data-act="zoomout" title="縮小">−</button>
-      <button type="button" data-act="zoomreset" class="zoom" title="100% に戻す">100%</button>
+      <button type="button" data-act="zoomdialog" class="zoom" title="表示倍率を指定する">100%</button>
       <button type="button" data-act="zoomin" title="拡大">+</button>
       <button type="button" data-act="max" title="この枠だけを大きくする / 戻す">⛶</button>
       <button type="button" data-act="popout" title="新しいタブで開く">↗</button>

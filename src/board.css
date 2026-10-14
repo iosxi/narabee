@@ -339,3 +339,97 @@ body.dragging.row {
 body.dragging.col {
   cursor: row-resize;
 }
+
+/* ---- 倍率のダイアログ ---- */
+
+.zoom-dialog {
+  position: fixed;
+  z-index: 10;
+  padding: 10px 12px 10px;
+  background: var(--bar);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+}
+
+.zoom-dialog[hidden] {
+  display: none;
+}
+
+.zd-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.zd-close:hover {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.zd-label {
+  display: block;
+  margin: 0 28px 6px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.zd-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.zd-input {
+  width: 5em;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+
+.zd-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.zd-unit {
+  margin-right: 4px;
+}
+
+.zd-set,
+.zd-reset {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--input);
+  cursor: pointer;
+}
+
+.zd-set {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #1c1c1c;
+  font-weight: 600;
+}
+
+.zd-reset:hover {
+  border-color: var(--muted);
+}
+
+.zd-error {
+  margin: 6px 0 0;
+  color: #d03b3b;
+  font-size: 12px;
+}
