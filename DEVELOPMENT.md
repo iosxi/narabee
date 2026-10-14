@@ -73,6 +73,7 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | github.com / www.google.com / x.com / www.youtube.com | 4 つとも枠の中で表示 |
 | nikkei225jp.com/cme/ | 表示 (本文 10,000 字超)。拒否ヘッダーは無い |
 | 楽天証券のログイン画面 (`/ITS/V_ACT_Login.html`) | 表示。`loginform` の `target="_top"` が送信時に `_self` になる |
+| youtube.com のトップと動画ページ | 表示。動画は `readyState` 4 まで読み込まれる |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
 拡張機能のページを最上位とする iframe には効かないということ。普段のログイン状態が
@@ -82,6 +83,18 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 `window.top.location.replace(...)` でエラーページへ飛ばす。枠の中ではこれが
 `SecurityError` になり (上の表)、エラーページへは移らない。ログイン後の動作は
 資格情報が無いので確かめていない。
+
+### 拡張機能の新しいタブ (follient など) は枠に入れられない (見送り)
+
+- 今の新しいタブの URL は `browserSettings.newTabPageOverride.get({})` で取れる
+  (follient なら `moz-extension://<uuid>/src/newtab.html`)。
+- ただし、その拡張機能が `web_accessible_resources` で公開していないと、枠は
+  `about:blank` のまま。公開すると、どの Web ページからも埋め込めるようになる。
+- 公開しても、ほかの拡張機能のページの iframe に入れられた拡張機能のページからは、
+  Firefox が `browser.bookmarks` だけを取り上げる (`tabs` や `storage`、
+  `runtime.sendMessage` は残る)。普通のタブで開けば使える。
+
+follient 側を変える必要があり、上の公開は安全性を下げるので、2026-10-14 に見送った。
 
 ## 作業手順
 
