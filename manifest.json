@@ -1,0 +1,42 @@
+{
+  "manifest_version": 2,
+  "name": "narabee",
+  "version": "1.0.0",
+  "description": "1 つのタブに 2〜4 つのサイトを並べて表示する。埋め込みを拒否しているサイトも並べられる。",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{4e1feda8-7008-4a40-bf3a-b1d4eb071982}",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
+  },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "webNavigation",
+    "storage",
+    "menus",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "src/state.js",
+      "src/background.js"
+    ]
+  },
+  "browser_action": {
+    "default_title": "narabee を開く",
+    "default_icon": {
+      "16": "src/icons/icon-16.png",
+      "32": "src/icons/icon-32.png"
+    }
+  },
+  "icons": {
+    "48": "src/icons/icon-48.png",
+    "96": "src/icons/icon-96.png"
+  }
+}
