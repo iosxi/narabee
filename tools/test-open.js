@@ -48,3 +48,16 @@
     }
   });
 })();
+
+/** .../showbar-of?b=<識別子> を開くと、その board のタブで右クリック「narabee レイアウトバーを表示」と同じ処理を呼ぶ。 */
+(() => {
+  browser.webNavigation.onCompleted.addListener(async (d) => {
+    if (d.frameId !== 0 || !d.url.includes('/showbar-of')) return;
+    const id = new URL(d.url).searchParams.get('b') || '';
+    const base = browser.runtime.getURL('src/board.html');
+    for (const tab of await browser.tabs.query({})) {
+      if (!tab.url || !tab.url.startsWith(base)) continue;
+      if ((new URL(tab.url).searchParams.get('b') || '') === id) globalThis.narabeeShowBar(tab.id);
+    }
+  });
+})();

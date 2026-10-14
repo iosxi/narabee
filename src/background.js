@@ -178,36 +178,61 @@
   );
 
   // ---- board のタブの管理 ----------------------------------------------
+  //
+  // board は 1 つのウィンドウに幾つでも開ける。board ごとに識別子 (URL の ?b=) を持ち、
+  // 保存先も別 (state:<識別子>。v8 までに開いた識別子の無い board は state)。
+
+  /** 読み込まれた board のタブ ID -> 識別子 (board が自分で名乗り出る) */
+  const boardIds = new Map();
+
+  function boardIdOf(url) {
+    try {
+      return new URL(url).searchParams.get('b') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function boardUrl(boardId) {
+    return boardId ? BOARD_URL + '?b=' + boardId : BOARD_URL;
+  }
 
   browser.runtime.onMessage.addListener((msg, sender) => {
     if (msg && msg.type === 'board-hello' && sender.tab) {
       boards.add(sender.tab.id);
+      boardIds.set(sender.tab.id, boardIdOf(sender.url || sender.tab.url));
       return Promise.resolve({ tabId: sender.tab.id });
     }
     return undefined;
   });
 
-  browser.tabs.onRemoved.addListener((tabId) => boards.delete(tabId));
+  // board のタブを閉じたとき、枠が全部空なら保存内容を捨てる (復元の対象にしない)。
+  // ウィンドウごと閉じたときは、Firefox のセッション復元で戻ることがあるので残す。
+  browser.tabs.onRemoved.addListener(async (tabId, info) => {
+    boards.delete(tabId);
+    if (!boardIds.has(tabId)) return;
+    const boardId = boardIds.get(tabId);
+    boardIds.delete(tabId);
+    if (info && info.isWindowClosing) return;
+    // board が閉じる直前の保存を待つ
+    await new Promise((r) => setTimeout(r, 500));
+    const state = await NarabeeState.load(boardId);
+    if (!NarabeeState.hasContent(state)) await NarabeeState.remove(boardId);
+  });
   browser.tabs.onUpdated.addListener((tabId, change) => {
-    if (change.url && !isBoardUrl(change.url)) boards.delete(tabId);
+    if (change.url && !isBoardUrl(change.url)) {
+      boards.delete(tabId);
+      boardIds.delete(tabId);
+    }
   });
 
-  // board はウィンドウごとに持つ。ツールバーのボタンや右クリックは、押したウィンドウの
-  // board だけを相手にする (v8 までは最初に見つかった board を相手にしていたので、
-  // ウィンドウ 2 で押すとウィンドウ 1 の board に帯が出ていた)。
-
-  /** そのウィンドウにある board のタブ。無ければ null。 */
-  async function boardInWindow(windowId) {
-    for (const tabId of boards) {
-      try {
-        const tab = await browser.tabs.get(tabId);
-        if (isBoardUrl(tab.url) && tab.windowId === windowId) return tab;
-        if (!isBoardUrl(tab.url)) boards.delete(tabId);
-      } catch {
-        boards.delete(tabId);
-      }
-    }
-    return null;
+  /**
+   * 開いている board のタブ (すべてのウィンドウ)。読み込まれていないタブ (再起動後に
+   * まだ選ばれていないタブ) も URL で数える。
+   */
+  async function openBoardTabs() {
+    const tabs = await browser.tabs.query({});
+    return tabs.filter((t) => isBoardUrl(t.url));
   }
 
   /** 新しい board の識別子 (board の URL の ?b=、保存先の区別に使う) */
@@ -215,26 +240,35 @@
     return crypto.randomUUID().slice(0, 8);
   }
 
-  /**
-   * そのウィンドウの board を前面に出す。無ければそのウィンドウに開く。
-   * 開いたときは { tab, created: true, boardId }。
-   */
-  async function showBoard(windowId) {
-    const tab = await boardInWindow(windowId);
-    if (tab) {
-      await browser.tabs.update(tab.id, { active: true });
-      return { tab, created: false };
-    }
-    const boardId = newBoardId();
-    const created = await browser.tabs.create({ url: BOARD_URL + '?b=' + boardId, windowId, active: true });
-    return { tab: created, created: true, boardId };
+  function createBoard(windowId, boardId = newBoardId(), active = true) {
+    return browser.tabs.create({ url: boardUrl(boardId), windowId, active });
   }
 
-  /** ツールバーのボタン: そのウィンドウの board を前面に出し (無ければ開き)、上の帯を出す。 */
+  /**
+   * ツールバーのボタン。
+   * - そのウィンドウに board があれば、board を 1 つ足す。
+   * - 無ければ、閉じた board (どのウィンドウにも開いていない、枠に何か入っているもの) を
+   *   すべてそのウィンドウに復元する。復元するものが無ければ新しく開く。
+   * 帯は開いた board が自分で出す (ボタンで帯を出すのは v10 でやめた)。
+   */
   async function onToolbarClick(windowId) {
-    const { tab, created } = await showBoard(windowId);
-    // 開いたばかりの board は自分で帯を出す
-    if (!created) browser.runtime.sendMessage({ type: 'show-bar', tabId: tab.id }).catch(() => {});
+    const open = await openBoardTabs();
+    if (open.some((t) => t.windowId === windowId)) {
+      await createBoard(windowId);
+      return;
+    }
+    const openIds = new Set(open.map((t) => boardIdOf(t.url)));
+    const closed = (await NarabeeState.list())
+      .filter((b) => !openIds.has(b.id) && NarabeeState.hasContent(b.state))
+      .sort((a, b) => (a.state.updatedAt || 0) - (b.state.updatedAt || 0));
+    if (closed.length === 0) {
+      await createBoard(windowId);
+      return;
+    }
+    // 最後に使っていたものを前面にする
+    for (let i = 0; i < closed.length; i += 1) {
+      await createBoard(windowId, closed[i].id, i === closed.length - 1);
+    }
   }
 
   browser.browserAction.onClicked.addListener((tab) => onToolbarClick(tab.windowId));
@@ -242,10 +276,19 @@
   // 動作テスト (tools/test-open.js) からツールバーのボタンと同じ処理を呼ぶための口
   globalThis.narabeeToolbarClick = onToolbarClick;
 
+  /** タブの右クリック「narabee レイアウトバーを表示」 */
+  async function showBarOf(tabId) {
+    await browser.tabs.update(tabId, { active: true });
+    browser.runtime.sendMessage({ type: 'show-bar', tabId }).catch(() => {});
+  }
+
+  globalThis.narabeeShowBar = showBarOf;
+
   // ---- 右クリックで枠に送る --------------------------------------------
 
   const MENU_PAGE = 'send-page';
   const MENU_LINK = 'send-link';
+  const MENU_BAR = 'show-bar';
 
   function buildMenus() {
     browser.menus.removeAll().then(() => {
@@ -254,6 +297,13 @@
         title: 'このページを narabee の枠に送る',
         contexts: ['page', 'tab'],
         documentUrlPatterns: ['http://*/*', 'https://*/*'],
+      });
+      // board のタブにだけ出す (onShown で切り替える)
+      browser.menus.create({
+        id: MENU_BAR,
+        title: 'narabee レイアウトバーを表示',
+        contexts: ['tab'],
+        visible: false,
       });
       browser.menus.create({
         id: MENU_LINK,
@@ -271,7 +321,16 @@
   browser.runtime.onInstalled.addListener(buildMenus);
   browser.runtime.onStartup.addListener(buildMenus);
 
+  browser.menus.onShown.addListener((info, tab) => {
+    if (!info.contexts.includes('tab')) return;
+    browser.menus.update(MENU_BAR, { visible: !!(tab && isBoardUrl(tab.url)) }).then(() => browser.menus.refresh());
+  });
+
   browser.menus.onClicked.addListener(async (info, tab) => {
+    if (info.menuItemId === MENU_BAR) {
+      if (tab && isBoardUrl(tab.url)) await showBarOf(tab.id);
+      return;
+    }
     const [parentId, idx] = String(info.menuItemId).split(':');
     const index = Number(idx);
     if (!Number.isInteger(index)) return;
@@ -281,23 +340,26 @@
   });
 
   /**
-   * そのウィンドウの board に読み込ませる (状態の持ち主は board)。
-   * board が無ければ、新しい board の保存先に書いてから開く。
+   * そのウィンドウで最後に使っていた board に読み込ませる (状態の持ち主は board)。
+   * board がまだ読み込まれていなければ保存先に書いてから前面に出し、
+   * そのウィンドウに board が無ければ新しく開く。
    */
   async function sendToPane(index, url, windowId) {
-    const existing = await boardInWindow(windowId);
-    if (existing) {
-      await browser.runtime.sendMessage({ type: 'load', tabId: existing.id, index, url }).catch(() => {});
-      await browser.tabs.update(existing.id, { active: true });
+    const inWindow = (await openBoardTabs()).filter((t) => t.windowId === windowId);
+    inWindow.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0));
+    const target = inWindow[0];
+    if (target && boards.has(target.id)) {
+      await browser.runtime.sendMessage({ type: 'load', tabId: target.id, index, url }).catch(() => {});
+      await browser.tabs.update(target.id, { active: true });
       return;
     }
-    const boardId = newBoardId();
-    const state = NarabeeState.blank();
+    const boardId = target ? boardIdOf(target.url) : newBoardId();
+    const state = target ? await NarabeeState.load(boardId) : NarabeeState.blank();
     state.panes[index].url = url;
-    if (index > 1) state.layout = index === 2 ? 'h3' : 'g22';
-    else state.layout = index === 1 ? 'h2' : 'one';
+    if (!target) state.layout = ['one', 'h2', 'h3', 'g22'][index] || 'g22';
     await NarabeeState.save(state, boardId);
-    await browser.tabs.create({ url: BOARD_URL + '?b=' + boardId, windowId, active: true });
+    if (target) await browser.tabs.update(target.id, { active: true });
+    else await createBoard(windowId, boardId);
   }
 
   // 動作テスト (tools/test-open.js) から右クリックの「枠に送る」と同じ処理を呼ぶための口

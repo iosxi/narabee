@@ -24,6 +24,7 @@ var NarabeeState = (() => {
     const s = blank();
     if (!raw || typeof raw !== 'object') return s;
     if (typeof raw.layout === 'string') s.layout = raw.layout;
+    if (Number.isFinite(raw.updatedAt)) s.updatedAt = raw.updatedAt;
     if (raw.sizes && typeof raw.sizes === 'object') s.sizes = raw.sizes;
     if (Array.isArray(raw.panes)) {
       for (let i = 0; i < MAX_PANES; i += 1) {
@@ -56,8 +57,30 @@ var NarabeeState = (() => {
   }
 
   function save(state, boardId) {
+    // 閉じた board を復元するとき、古いものから順に並べるのに使う
+    state.updatedAt = Date.now();
     return browser.storage.local.set({ [keyFor(boardId)]: state });
   }
 
-  return { MAX_PANES, blank, normalize, load, save };
+  /** 保存されている board の一覧 [{ id, state }] (id は識別子。v8 までの board は '') */
+  async function list() {
+    const all = await browser.storage.local.get(null);
+    const out = [];
+    for (const [key, value] of Object.entries(all)) {
+      if (key === KEY) out.push({ id: '', state: normalize(value) });
+      else if (key.startsWith(KEY + ':')) out.push({ id: key.slice(KEY.length + 1), state: normalize(value) });
+    }
+    return out;
+  }
+
+  function remove(boardId) {
+    return browser.storage.local.remove(keyFor(boardId));
+  }
+
+  /** 枠に何か入っているか (空の board は閉じても復元の対象にしない) */
+  function hasContent(state) {
+    return state.panes.some((p) => p.url);
+  }
+
+  return { MAX_PANES, blank, normalize, load, save, list, remove, hasContent };
 })();
