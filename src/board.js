@@ -156,6 +156,18 @@
     saveSoon();
   }
 
+  /** 枠を最初の何も無い状態に戻す。 */
+  function closePane(p) {
+    state.panes[p.index].url = '';
+    showUrl(p, '');
+    p.iframe.src = 'about:blank';
+    if (maxed === p.index) {
+      maxed = null;
+      place();
+    }
+    saveSoon();
+  }
+
   function applyZoom(p) {
     const z = state.panes[p.index].zoom;
     p.iframe.style.setProperty('--z', String(z));
@@ -211,6 +223,9 @@
         break;
       case 'max':
         toggleMax(p.index);
+        break;
+      case 'close':
+        closePane(p);
         break;
       case 'popout':
         if (p.current) browser.tabs.create({ url: p.current });
@@ -381,16 +396,29 @@
       return Promise.resolve({ ok: !!p });
     }
     if (msg.type === 'escape' && msg.tabId === tabId) {
-      // 枠の中のページがタブごと移ろうとした。始めた枠を探してそこで開く。
+      // 枠の中のページがタブごと移ろうとした (楽天証券の会員ページは画面の
+      // 切り替えに window.top.location.replace を使う)。始めた枠を探してそこで開く。
+      // URL が一致する枠を優先し、無ければ同じ origin の枠。
       let origin = null;
       try {
         origin = new URL(msg.originUrl).origin;
       } catch {
         origin = null;
       }
-      const p = panes.find((x) => !x.el.hidden && x.current && new URL(x.current).origin === origin);
-      if (p) loadPane(p.index, msg.url);
-      else browser.tabs.create({ url: msg.url });
+      const shown = panes.filter((x) => !x.el.hidden && x.current);
+      const p =
+        shown.find((x) => x.current === msg.originUrl) ||
+        shown.find((x) => {
+          try {
+            return new URL(x.current).origin === origin;
+          } catch {
+            return false;
+          }
+        });
+      // 「枠から抜け出す」処理 (top.location = 自分の URL) は、枠で読み直すと
+      // 同じ処理がまた走って止まらない。今と同じ URL なら何もしない。
+      if (p && p.current !== msg.url) loadPane(p.index, msg.url);
+      else if (!p) browser.tabs.create({ url: msg.url });
       return Promise.resolve({ ok: true });
     }
     return undefined;

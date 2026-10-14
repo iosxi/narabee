@@ -97,10 +97,25 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 - `target="_top"` / `_parent` のリンク・フォーム: 背景が `webNavigation.onCommitted`
   で board の枠に `frame.js` を差し込み、クリック・送信の直前に `_self` へ書き換える。
   楽天証券のログインフォームが `target="_top"`。
-- スクリプトからの `top.location = ...`: ユーザー操作なしでは Firefox が
-  `SecurityError` で止める (実測)。ユーザー操作つきで通った場合に備え、背景の
-  `onBeforeRequest` (`main_frame`) で、board のタブを Web のページが動かそうとしたら
-  取り消し、元の枠 (同じ origin の枠) で開き直す。無ければ新しいタブで開く。
+- スクリプトからの `top.location = ...` / `top.location.replace(...)`: ユーザー操作
+  なしでは、Firefox のリダイレクト防止が `SecurityError` で止め、「Firefox がこのサイトで
+  リダイレクトをブロックしました」を出す。楽天証券の会員ページ (`member.rakuten-sec.co.jp`)
+  は画面の切り替え (ログイン後の会員ホームへ、セッション切れの案内へ) に
+  `window.top.location.replace(...)` を使うので、v3 まではログインできなかった。
+  通知の「設定」で許可しても、最上位が拡張機能のページなので効かなかった。
+
+  v4 では枠に `sandbox` を付け、`allow-top-navigation` を明示的に許す。こうすると
+  Firefox はリダイレクト防止で止めず、タブ全体の移動の要求が出る。これを背景の
+  `onBeforeRequest` (`main_frame`) で取り消し、元の枠 (URL が一致する枠、無ければ同じ
+  origin の枠) で開き直す。無ければ新しいタブで開く。
+
+  `top.location = location.href` のような「枠から抜け出す」処理は、枠で読み直すと同じ
+  処理がまた走る。移動先が今の枠の URL と同じなら何もしない。
+
+  `sandbox` には `allow-same-origin` を含めて origin を保ち、スクリプト・フォーム・
+  ポップアップ・ダウンロード・モーダルなど普通の枠と同じ動作を許している。
+  付けた後も、クッキー・localStorage・Service Worker・WebAuthn・動画の再生が
+  変わらないことを確かめた (下の表)。
 
 ## 実測した事実 (Firefox 157.0.1、2026-10-14)
 
@@ -123,6 +138,10 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | 互い違い (`zigv` / `zigh`) | 枠 1・4 が 65%、枠 2・3 が 35% |
 | 枠の中の YouTube で「ログイン」 | v2 は 401。v3 は枠が YouTube のまま、ログイン画面が新しいタブで開く |
 | ログイン用タブを YouTube の動画ページへ移す | タブが閉じ、枠に同じ動画ページが読み込まれる |
+| 枠で `top.location.replace(別の URL)` (ユーザー操作なし) | v3 は `SecurityError`。v4 は枠の中でその URL に移り、board は残る |
+| 枠で `top.location = location.href` | v4 はエラーにならず、読み直しは起きない (13 秒間でサーバーへの要求は 1 回) |
+| v4 (`sandbox` あり) での WebAuthn / Service Worker 登録済みの YouTube / Google ログインの振り替え / YouTube 動画 | いずれも v3 と同じ結果 (動画は `readyState` 4) |
+| × ボタン | 枠が `about:blank` になり、URL 欄と保存上の URL も空になる |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
 拡張機能のページを最上位とする iframe には効かないということ。普段のログイン状態が
