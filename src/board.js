@@ -297,7 +297,7 @@
     const total = horizontal ? box.width * d.node.w : box.height * d.node.h;
     const min = Math.min(0.45, MIN_PANE_PX / Math.max(1, total));
     const sizes = (state.sizes[layout.id] = state.sizes[layout.id] || {});
-    const fr = NarabeeLayouts.fractions(sizes[d.path], node.c.length);
+    const fr = NarabeeLayouts.fractions(sizes[d.path], node);
     const before = fr.slice(0, d.k).reduce((a, b) => a + b, 0);
     const pair = fr[d.k] + fr[d.k + 1];
 

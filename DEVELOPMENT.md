@@ -35,6 +35,24 @@ XPI の中身を変えたら必ず番号を上げる。AMO で署名した番号
 `frame-ancestors` は祖先を全部たどって判定されるので、枠の中のサイトが自分で
 埋め込んでいる iframe も対象に含める。
 
+### Service Worker を持つサイト (v2)
+
+サイトが Service Worker を持っていると、枠の読み込みは次のように進む
+(Firefox 158 の利用者環境で YouTube が `xfoBlocked` になり、手元で再現して記録した)。
+
+1. 枠の要求 (`sub_frame`、board のタブ、`frameAncestors` に board) が始まる
+2. 同じ URL への内部の振り替え (`onBeforeRedirect`) で Service Worker に渡る
+3. Service Worker が同じ URL を取り直す。この要求も `sub_frame` だが、
+   `tabId` も `frameId` も -1、`frameAncestors` は空、`originUrl` はそのサイト
+
+3 の応答に `X-Frame-Options` が付いたまま枠に返るので、v1 では拒否されていた。
+v2 では 1 と 2 で URL を 30 秒だけ覚え、3 で「`tabId` が -1・同じ URL・
+`originUrl` が同じ origin」なら board の枠向けとみなして外す。覚えた URL は
+一度使ったら消す。Service Worker を持たないサイトや、普通のタブには影響しない。
+
+Service Worker がネットに出ずに Cache Storage から返すサイトは、webRequest を
+通らないので外せない (YouTube はネットに取りに行く)。
+
 ### 枠の中の URL を追う
 
 枠は別のサイトなので `iframe.contentWindow.location` は読めない。board 自身が
@@ -74,6 +92,9 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | nikkei225jp.com/cme/ | 表示 (本文 10,000 字超)。拒否ヘッダーは無い |
 | 楽天証券のログイン画面 (`/ITS/V_ACT_Login.html`) | 表示。`loginform` の `target="_top"` が送信時に `_self` になる |
 | youtube.com のトップと動画ページ | 表示。動画は `readyState` 4 まで読み込まれる |
+| 先に普通のタブで YouTube を開き、Service Worker が登録された後 | v1 は `about:neterror?e=xfoBlocked`。v2 はトップ・動画・`youtube.com` (転送あり) とも表示 |
+| AdGuard AdBlocker 5.5.3.5 を入れた状態 (Service Worker なし) | 表示 (AdGuard は無関係だった) |
+| 互い違い (`zigv` / `zigh`) | 枠 1・4 が 65%、枠 2・3 が 35% |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
 拡張機能のページを最上位とする iframe には効かないということ。普段のログイン状態が

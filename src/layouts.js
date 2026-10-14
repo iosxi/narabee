@@ -5,10 +5,13 @@
  *   { d: 'row' | 'col', c: [子, ...] }
  * で、row は横に並べる (左右に分ける)、col は縦に積む (上下に分ける)。
  * 2-1 のような組み合わせも、木を入れ子にすれば書ける。
+ * s を付けると、比率を保存していないときの初期の比率になる (無ければ等分)。
  */
 var NarabeeLayouts = (() => {
   const row = (...c) => ({ d: 'row', c });
   const col = (...c) => ({ d: 'col', c });
+  /** 比率の初期値つきの節 */
+  const sized = (node, s) => ({ ...node, s });
 
   const LIST = [
     { id: 'one', name: '1 つだけ', tree: 0 },
@@ -25,6 +28,9 @@ var NarabeeLayouts = (() => {
     { id: 'g22', name: '2×2', tree: col(row(0, 1), row(2, 3)) },
     { id: 'l1r3', name: '左 1・右 3', tree: row(0, col(1, 2, 3)) },
     { id: 't1b3', name: '上 1・下 3', tree: col(0, row(1, 2, 3)) },
+    // 2×2 の境目を列 (行) ごとにずらしたもの。左は上が大きく、右は下が大きい
+    { id: 'zigv', name: '左右で互い違い', tree: row(sized(col(0, 1), [0.65, 0.35]), sized(col(2, 3), [0.35, 0.65])) },
+    { id: 'zigh', name: '上下で互い違い', tree: col(sized(row(0, 1), [0.65, 0.35]), sized(row(2, 3), [0.35, 0.65])) },
   ];
 
   const byId = new Map(LIST.map((l) => [l.id, l]));
@@ -37,13 +43,17 @@ var NarabeeLayouts = (() => {
     return typeof tree === 'number' ? 1 : tree.c.reduce((n, c) => n + count(c), 0);
   }
 
-  /** 保存された比率が使えなければ等分にする。 */
-  function fractions(saved, n) {
-    if (Array.isArray(saved) && saved.length === n && saved.every((x) => typeof x === 'number' && x > 0)) {
-      const sum = saved.reduce((a, b) => a + b, 0);
-      return saved.map((x) => x / sum);
-    }
-    return Array.from({ length: n }, () => 1 / n);
+  function usable(list, n) {
+    return Array.isArray(list) && list.length === n && list.every((x) => typeof x === 'number' && x > 0);
+  }
+
+  /** 保存された比率が使えなければ節の初期値、それも無ければ等分にする。 */
+  function fractions(saved, node) {
+    const n = node.c.length;
+    const list = usable(saved, n) ? saved : usable(node.s, n) ? node.s : null;
+    if (!list) return Array.from({ length: n }, () => 1 / n);
+    const sum = list.reduce((a, b) => a + b, 0);
+    return list.map((x) => x / sum);
   }
 
   /**
@@ -60,7 +70,7 @@ var NarabeeLayouts = (() => {
         panes.push({ index: t, x, y, w, h });
         return;
       }
-      const fr = fractions(sizes && sizes[path], t.c.length);
+      const fr = fractions(sizes && sizes[path], t);
       let offset = 0;
       t.c.forEach((child, k) => {
         const f = fr[k];

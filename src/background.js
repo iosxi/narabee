@@ -22,6 +22,47 @@
     return Array.isArray(anc) && anc.some((a) => a && typeof a.url === 'string' && a.url.startsWith(BASE));
   }
 
+  // サイトが Service Worker を持っていると、枠の読み込みは Service Worker に
+  // 振り替えられ、Service Worker が同じ URL を取り直す。その応答には
+  // frameAncestors もタブも付かない (tabId -1) ので、上の判定では拾えない。
+  // YouTube がこれで、一度でも普通のタブで開いていると枠に入らなくなっていた。
+  // board の枠が読み込み始めた URL を少しの間だけ覚え、同じサイトの
+  // Service Worker が同じ URL を取りに来たら、それも board の枠向けとみなす。
+  const SW_WINDOW_MS = 30000;
+  const swExpected = new Map(); // URL -> 期限
+
+  function expectServiceWorker(url) {
+    const now = Date.now();
+    for (const [u, until] of swExpected) if (until < now) swExpected.delete(u);
+    swExpected.set(url, now + SW_WINDOW_MS);
+  }
+
+  function fromServiceWorkerForBoard(details) {
+    if (details.tabId !== -1) return false;
+    const until = swExpected.get(details.url);
+    if (!until || until < Date.now()) return false;
+    try {
+      if (new URL(details.originUrl).origin !== new URL(details.url).origin) return false;
+    } catch {
+      return false;
+    }
+    swExpected.delete(details.url);
+    return true;
+  }
+
+  browser.webRequest.onBeforeRequest.addListener(
+    (details) => {
+      if (underBoard(details)) expectServiceWorker(details.url);
+    },
+    { urls: ['<all_urls>'], types: ['sub_frame'] }
+  );
+  browser.webRequest.onBeforeRedirect.addListener(
+    (details) => {
+      if (underBoard(details)) expectServiceWorker(details.redirectUrl);
+    },
+    { urls: ['<all_urls>'], types: ['sub_frame'] }
+  );
+
   function stripFrameAncestors(csp) {
     return csp
       .split(';')
@@ -31,7 +72,7 @@
 
   browser.webRequest.onHeadersReceived.addListener(
     (details) => {
-      if (!underBoard(details)) return {};
+      if (!underBoard(details) && !fromServiceWorkerForBoard(details)) return {};
       const out = [];
       let changed = false;
       for (const h of details.responseHeaders) {
