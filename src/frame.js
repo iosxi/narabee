@@ -81,6 +81,19 @@
     { passive: true }
   );
 
+  // ページの題名を board に知らせる。board は枠 1 の題名をタブ (ウィンドウ) の題名に使う。
+  // 題名は後から変わることがある (ni225simple が設定を付け足すなど) ので、1 秒ごとに見る。
+  let lastTitle = null;
+  function reportTitle() {
+    const title = document.title;
+    if (title === lastTitle) return;
+    lastTitle = title;
+    browser.runtime.sendMessage({ type: 'frame-title', title }).catch(() => {});
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', reportTitle, { once: true });
+  else reportTitle();
+  setInterval(reportTitle, 1000);
+
   const ESCAPING = /^_(top|parent)$/i;
   const ATTRS = ['target', 'formtarget'];
   const SELECTOR = 'a[target], area[target], form[target], base[target], button[formtarget], input[formtarget]';

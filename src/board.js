@@ -177,6 +177,10 @@
 
   function showUrl(p, url) {
     p.current = url;
+    // 題名は frame.js が知らせる。新しいページは自分で知らせてくるので、ここで消すのは
+    // 枠を空にしたときだけ (# の変化やページ内の切り替えでは知らせが来ないため)
+    if (!url) p.title = '';
+    if (p.index === 0) updateDocTitle();
     if (document.activeElement !== p.input) p.input.value = url;
     p.el.classList.toggle('is-empty', !url);
     p.input.title = url;
@@ -466,6 +470,25 @@
     saveSoon();
   }
 
+  // ---- タブ (ウィンドウ) の題名 ---------------------------------------------
+  //
+  // 「narabee」だけではウィンドウを見分けられないので、枠 1 のページの題名を付けて
+  // 「narabee(題名)」にする。枠の中は別のサイトなので題名は frame.js が知らせる。
+
+  function updateDocTitle() {
+    const p = panes[0];
+    const title = p && p.current && p.title ? p.title.trim() : '';
+    document.title = title ? 'narabee(' + title + ')' : 'narabee';
+  }
+
+  function recordTitle(msg, sender) {
+    if (!sender.tab || sender.tab.id !== tabId || typeof msg.title !== 'string') return;
+    const p = paneByFrameId(sender.frameId);
+    if (!p) return;
+    p.title = msg.title;
+    if (p.index === 0) updateDocTitle();
+  }
+
   // ---- 背景からの指示 ---------------------------------------------------
 
   /** 枠を index 番まで見せられるレイアウトに切り替える (足りないときだけ)。 */
@@ -481,6 +504,10 @@
     if (msg.type === 'show-bar' && msg.tabId === tabId) {
       showBar();
       return Promise.resolve({ ok: true });
+    }
+    if (msg.type === 'frame-title') {
+      recordTitle(msg, sender);
+      return undefined;
     }
     if (msg.type === 'frame-scroll') {
       recordScroll(msg, sender);

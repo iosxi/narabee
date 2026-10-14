@@ -106,6 +106,16 @@ Web のページの `onCommitted` で、`executeScript` (`document_idle`) から
 帯の上にマウスがある間 (`pointerenter`〜`pointerleave`) は数えず、離れてから数え直す。
 帯は普通の段なので、隠すと枠が上に広がる (枠 1 の上端 34px → 2px)。
 
+### タブ (ウィンドウ) の題名 (v8)
+
+「narabee」だけではウィンドウを見分けられないので、枠 1 のページの題名を付けて
+`narabee(題名)` にする (Firefox はこれに「— Mozilla Firefox」を付けてウィンドウの題名にする)。
+枠の中は別のサイトなので、`frame.js` が `document.title` を DOMContentLoaded と
+1 秒ごとの確認で、変わったときだけ `{ type: 'frame-title', title }` で知らせる
+(後から題名を変えるページ、ni225simple が設定を付け足す場合に追従するため)。
+題名を消すのは枠を空にしたときだけ。`#` の変化やページ内の切り替えでは題名の
+知らせが来ないので、URL が変わったからといって消すと題名が空のままになる。
+
 ### 枠の中の URL を追う
 
 枠は別のサイトなので `iframe.contentWindow.location` は読めない。board 自身が
@@ -205,6 +215,9 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | 帯: 開いた直後 / × / ボタン相当の指示 / レイアウトのボタン | 出る / 隠れる / 出る / 隠れる |
 | 帯: 出して 13 秒 / 16 秒 | 出ている / 隠れる |
 | 帯: マウスを乗せて 17 秒 / 離してから | 出ている / 17 秒後に隠れる (1 秒ごとの確認) |
+| 題名: 枠 1 が nikkei225jp | `narabee(225先物 CME SGX 大取 夜間 リアルタイム チャート)` |
+| 題名: 2.5 秒後に題名を変えるページ | 1.5 秒で `narabee(はじめの題名)`、4.5 秒で `narabee(あとの題名)` |
+| 題名: 枠 1 を × で閉じる | `narabee` |
 | v5 で nikkei225jp / 楽天の公開ページ / YouTube | 固まらず表示 (`parent` は元のまま) |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
