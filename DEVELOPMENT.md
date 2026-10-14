@@ -95,8 +95,34 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 ### 枠からの脱出を防ぐ
 
 - `target="_top"` / `_parent` のリンク・フォーム: 背景が `webNavigation.onCommitted`
-  で board の枠に `frame.js` を差し込み、クリック・送信の直前に `_self` へ書き換える。
-  楽天証券のログインフォームが `target="_top"`。
+  で board の枠に `frame.js` を差し込み、`target` / `formtarget` 属性を `_self` へ
+  書き換える。楽天証券のログインフォームが `target="_top"`。
+
+  v4 までは送信の瞬間 (`submit` イベント) に書き換えていたが、楽天のログインボタンは
+  onclick で `document.loginform.submit()` を呼び、スクリプトからの `submit()` は
+  `submit` イベントを出さない。`_top` のまま POST がタブ全体に出て、見張りが枠に
+  読み直す際に本文 (ID・パスワード) が落ちて GET になり、ログインエラーになっていた。
+  v5 では `MutationObserver` で、属性が現れた時点 (後から足された要素も) で書き換える。
+- 楽天証券の会員ページのメニュー (保存してもらったページで 125 個) は
+  `onclick="memberPageJump('...')"`。`memberPageJump()` は `typeof parent.IFAWebMain` を
+  調べるが、枠の `parent` は board なので `SecurityError` になり、それを `catch` で
+  握りつぶすので、押しても何も起きなかった。v5 の `frame.js` は、クリックの捕捉段階で
+  ページの `memberPageJump` を包み直し、**呼んでいる間だけ** ページから見た `parent` を
+  自分自身にする (`exportFunction`、終わったら元の記述子に戻す)。最後の
+  `top.location.href` に進み、下の見張りが枠の中の移動に振り替える。
+
+  `parent` を常に自分自身にする案は捨てた。`top` は上書きできないので
+  「`parent` をたどって `top` に着くまで」の処理が終わらず、nikkei225jp.com/cme/ の枠が
+  `about:framecrashed` になり、楽天の公開ページも固まった (`defineProperty`・代入・
+  `<script>` 差し込みの 3 通りとも)。
+
+  包み済みかどうかは関数に付けた目印 (`__narabeeWrapped`) で見る。拡張機能側とページ側では
+  同じ関数でも別のオブジェクトに見えるので、`WeakSet` ではクリックのたびに包み直していた
+  (ページ側で `memberPageJump` の同一性を比べて確かめた)。
+
+  包んだ関数から元の関数を呼ぶときは `fn.call(self, ...args)` にする。
+  `fn.apply(self, args)` だと `args` が拡張機能側の配列で、ページ側から
+  `Permission denied to access property "length"` になる。
 - スクリプトからの `top.location = ...` / `top.location.replace(...)`: ユーザー操作
   なしでは、Firefox のリダイレクト防止が `SecurityError` で止め、「Firefox がこのサイトで
   リダイレクトをブロックしました」を出す。楽天証券の会員ページ (`member.rakuten-sec.co.jp`)
@@ -142,6 +168,11 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | 枠で `top.location = location.href` | v4 はエラーにならず、読み直しは起きない (13 秒間でサーバーへの要求は 1 回) |
 | v4 (`sandbox` あり) での WebAuthn / Service Worker 登録済みの YouTube / Google ログインの振り替え / YouTube 動画 | いずれも v3 と同じ結果 (動画は `readyState` 4) |
 | × ボタン | 枠が `about:blank` になり、URL 欄と保存上の URL も空になる |
+| 楽天と同じ作りのフォーム (`target="_top"` の POST を onclick から `submit()`) | v4 は枠に `GET`・本文なし。v5 は `POST` で `loginid=…&passwd=…` が届く |
+| 楽天と同じ作りのメニュー (`memberPageJump`) | v4 は `SecurityError` を握りつぶして何も起きない。v5 は枠の中で移動先へ |
+| v5 の差し替えの前後の `parent === window` | 呼ぶ前 false、実行中 true、呼んだ後 false (2 回目も同じ) |
+| クリック 3 回の前後の `memberPageJump` | 同じ関数のまま (包み直さない) |
+| v5 で nikkei225jp / 楽天の公開ページ / YouTube | 固まらず表示 (`parent` は元のまま) |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が
 拡張機能のページを最上位とする iframe には効かないということ。普段のログイン状態が
