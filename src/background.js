@@ -197,11 +197,20 @@
     return boardId ? BOARD_URL + '?b=' + boardId : BOARD_URL;
   }
 
+  /**
+   * 次に読み込まれたときに帯を出す board の識別子。帯を出すのは、ツールバーのボタンや
+   * 「枠に送る」で board のタブを足したときと、まだ読み込まれていない board で
+   * 「レイアウトバーを表示」を選んだときだけ。board を読み直したとき (F5 や、
+   * Firefox の再起動でタブが戻ったとき) は出さない。
+   */
+  const showBarOnHello = new Set();
+
   browser.runtime.onMessage.addListener((msg, sender) => {
     if (msg && msg.type === 'board-hello' && sender.tab) {
+      const boardId = boardIdOf(sender.url || sender.tab.url);
       boards.add(sender.tab.id);
-      boardIds.set(sender.tab.id, boardIdOf(sender.url || sender.tab.url));
-      return Promise.resolve({ tabId: sender.tab.id });
+      boardIds.set(sender.tab.id, boardId);
+      return Promise.resolve({ tabId: sender.tab.id, showBar: showBarOnHello.delete(boardId) });
     }
     return undefined;
   });
@@ -224,6 +233,10 @@
       boards.delete(tabId);
       boardIds.delete(tabId);
     }
+    // 破棄されたタブ (メモリ節約で中身を捨てたタブ) の board は、前面に出ると読み込み直して
+    // 名乗り出る。それまでは読み込まれていない board として扱う (指示を送っても届かない)。
+    // boardIds は閉じたときの後始末に使うので残す。
+    if (change.discarded === true) boards.delete(tabId);
   });
 
   /**
@@ -240,7 +253,9 @@
     return crypto.randomUUID().slice(0, 8);
   }
 
+  /** board のタブを足す。足した board は、読み込まれたときに帯を出す。 */
   function createBoard(windowId, boardId = newBoardId(), active = true) {
+    showBarOnHello.add(boardId);
     return browser.tabs.create({ url: boardUrl(boardId), windowId, active });
   }
 
@@ -249,7 +264,7 @@
    * - そのウィンドウに board があれば、board を 1 つ足す。
    * - 無ければ、閉じた board (どのウィンドウにも開いていない、枠に何か入っているもの) を
    *   すべてそのウィンドウに復元する。復元するものが無ければ新しく開く。
-   * 帯は開いた board が自分で出す (ボタンで帯を出すのは v10 でやめた)。
+   * 帯は足した board が読み込まれたときに出す (createBoard)。
    */
   async function onToolbarClick(windowId) {
     const open = await openBoardTabs();
@@ -276,10 +291,17 @@
   // 動作テスト (tools/test-open.js) からツールバーのボタンと同じ処理を呼ぶための口
   globalThis.narabeeToolbarClick = onToolbarClick;
 
-  /** タブの右クリック「narabee レイアウトバーを表示」 */
+  /**
+   * タブの右クリック「narabee レイアウトバーを表示」。board がまだ読み込まれていない
+   * (再起動後に選ばれていない) タブは、前面に出すと読み込まれるので、そのとき帯を出す。
+   */
   async function showBarOf(tabId) {
+    if (!boards.has(tabId)) {
+      const tab = await browser.tabs.get(tabId);
+      showBarOnHello.add(boardIdOf(tab.url));
+    }
     await browser.tabs.update(tabId, { active: true });
-    browser.runtime.sendMessage({ type: 'show-bar', tabId }).catch(() => {});
+    if (boards.has(tabId)) browser.runtime.sendMessage({ type: 'show-bar', tabId }).catch(() => {});
   }
 
   globalThis.narabeeShowBar = showBarOf;

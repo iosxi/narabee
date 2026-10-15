@@ -204,6 +204,28 @@ body.bar-hidden #bar {
   color: var(--muted);
 }
 
+/* 自動の再読み込み。間隔を決めている枠は色を付けて間隔を出す */
+.pane header .auto {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pane header .auto.on {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.pane header .auto.on:hover {
+  background: color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+/* POST で開いたページなので止めている */
+.pane header .auto.paused {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
 .num {
   flex: none;
   display: inline-grid;
@@ -246,6 +268,10 @@ body.bar-hidden #bar {
 .pane.narrow [data-act="zoomout"],
 .pane.narrow [data-act="zoomin"],
 .pane.narrow [data-act="popout"] {
+  display: none;
+}
+
+.pane.narrow .auto-text {
   display: none;
 }
 
@@ -405,6 +431,11 @@ body.dragging.col {
 
 .zd-unit {
   margin-right: 4px;
+}
+
+.rd-min,
+.rd-sec {
+  width: 3.5em;
 }
 
 .zd-set,

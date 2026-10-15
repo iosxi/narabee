@@ -137,6 +137,7 @@
       iframe: el.querySelector('iframe'),
       input: el.querySelector('.url'),
       zoomBtn: el.querySelector('.zoom'),
+      autoBtn: el.querySelector('.auto'),
       /** 枠の中で今表示している URL (webNavigation で追う) */
       current: '',
     };
@@ -196,9 +197,12 @@
     saveSoon();
   }
 
-  /** 枠を最初の何も無い状態に戻す。 */
+  /** 枠を最初の何も無い状態に戻す。自動の再読み込みもやめる (次に入れるサイトに持ち越さない)。 */
   function closePane(p) {
     state.panes[p.index].url = '';
+    state.panes[p.index].reload = 0;
+    showAutoReload(p);
+    armAutoReload(p);
     showUrl(p, '');
     p.iframe.src = 'about:blank';
     if (maxed === p.index) {
@@ -230,86 +234,256 @@
     saveSoon();
   }
 
-  // ---- 倍率のダイアログ ---------------------------------------------------
+  // ---- 見出しから開くダイアログ (倍率・自動の再読み込み) -----------------------
   //
-  // 見出しの倍率 (「100%」) を押すと開く。入力した値はすぐには反映せず、「セット」
-  // (Enter) で反映して閉じる。「リセット」は 100% にして閉じる。× ・Esc・
+  // 入力した値はすぐには反映せず、「セット」(Enter) で反映して閉じる。× ・Esc・
   // ダイアログの外を押す (枠の中のページを押すと board から焦点が外れる) と、
-  // 入力を捨てて閉じる。
+  // 入力を捨てて閉じる。開いたボタンをもう一度押しても閉じる。
 
-  const ZOOM_MIN = 10;
-  const ZOOM_MAX = 500;
-  const zoomDialog = document.getElementById('zoom-dialog');
-  const zoomForm = zoomDialog.querySelector('form');
-  const zoomInput = zoomDialog.querySelector('.zd-input');
-  const zoomError = zoomDialog.querySelector('.zd-error');
-  /** ダイアログを開いている枠。閉じていれば null */
-  let zoomTarget = null;
+  /** 開いているダイアログ { el, p (枠), btn (開いたボタン) }。閉じていれば null */
+  let popup = null;
 
-  function openZoomDialog(p) {
-    if (zoomTarget === p) {
-      closeZoomDialog();
-      return;
+  /** 枠 p のボタン btn の下にダイアログ el を開く。同じボタンで開いていれば閉じて false。 */
+  function openPopup(el, p, btn) {
+    if (popup && popup.btn === btn) {
+      closePopup();
+      return false;
     }
-    zoomTarget = p;
-    zoomInput.value = String(Math.round(state.panes[p.index].zoom * 100));
-    zoomError.hidden = true;
-    zoomDialog.hidden = false;
-    // 倍率のボタンの下に出す。画面からはみ出すなら内側に寄せる
-    const r = p.zoomBtn.getBoundingClientRect();
-    const w = zoomDialog.offsetWidth;
-    const h = zoomDialog.offsetHeight;
+    closePopup();
+    popup = { el, p, btn };
+    el.querySelector('.zd-error').hidden = true;
+    el.hidden = false;
+    // ボタンの下に出す。画面からはみ出すなら内側に寄せる
+    const r = btn.getBoundingClientRect();
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
     const left = Math.max(4, Math.min(window.innerWidth - w - 4, r.left + r.width / 2 - w / 2));
     const top = r.bottom + 4 + h > window.innerHeight ? Math.max(4, r.top - h - 4) : r.bottom + 4;
-    zoomDialog.style.left = left + 'px';
-    zoomDialog.style.top = top + 'px';
-    zoomInput.focus();
-    zoomInput.select();
+    el.style.left = left + 'px';
+    el.style.top = top + 'px';
+    return true;
   }
 
-  function closeZoomDialog() {
-    zoomTarget = null;
+  function closePopup() {
+    if (!popup) return;
+    const { el } = popup;
+    popup = null;
     // 見えなくなった入力欄に焦点を残さない
-    if (zoomDialog.contains(document.activeElement)) document.activeElement.blur();
-    zoomDialog.hidden = true;
+    if (el.contains(document.activeElement)) document.activeElement.blur();
+    el.hidden = true;
   }
 
-  zoomForm.addEventListener('submit', (ev) => {
-    ev.preventDefault();
-    if (!zoomTarget) return;
-    const v = Number(zoomInput.value.trim());
-    if (!Number.isFinite(v) || v < ZOOM_MIN || v > ZOOM_MAX) {
-      zoomError.textContent = ZOOM_MIN + '〜' + ZOOM_MAX + ' の数で入れてください';
-      zoomError.hidden = false;
-      zoomInput.focus();
-      zoomInput.select();
-      return;
-    }
-    setZoom(zoomTarget, v / 100);
-    closeZoomDialog();
-  });
-  zoomDialog.querySelector('.zd-reset').addEventListener('click', () => {
-    if (zoomTarget) setZoom(zoomTarget, 1);
-    closeZoomDialog();
-  });
-  zoomDialog.querySelector('.zd-close').addEventListener('click', closeZoomDialog);
-  zoomDialog.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') closeZoomDialog();
-  });
-  // ダイアログの外を押したら閉じる。同じ枠の倍率のボタンなら、そのボタンの
-  // クリックが閉じる (openZoomDialog が開いている枠と同じなら閉じる)
+  function focusInput(input) {
+    input.focus();
+    input.select();
+  }
+
+  /** ダイアログ内に誤りを知らせ、開いたままにする。 */
+  function popupError(el, text, input) {
+    const err = el.querySelector('.zd-error');
+    err.textContent = text;
+    err.hidden = false;
+    focusInput(input);
+  }
+
+  // ダイアログの外を押したら閉じる。開いたボタンなら、そのボタンのクリックが閉じる
   document.addEventListener(
     'pointerdown',
     (ev) => {
-      if (!zoomTarget || zoomDialog.contains(ev.target)) return;
-      if (ev.target instanceof Element && ev.target.closest('.zoom') === zoomTarget.zoomBtn) return;
-      closeZoomDialog();
+      if (!popup || popup.el.contains(ev.target)) return;
+      if (ev.target instanceof Element && ev.target.closest('button') === popup.btn) return;
+      closePopup();
     },
     true
   );
   // 枠の中のページを押すと、board から焦点が外れる (board には pointerdown が来ない)
-  window.addEventListener('blur', () => {
-    if (zoomTarget) closeZoomDialog();
+  window.addEventListener('blur', closePopup);
+
+  // ---- 倍率のダイアログ ---------------------------------------------------
+  //
+  // 見出しの倍率 (「100%」) を押すと開く。「リセット」は 100% にして閉じる。
+
+  const ZOOM_MIN = 10;
+  const ZOOM_MAX = 500;
+  const zoomDialog = document.getElementById('zoom-dialog');
+  const zoomInput = zoomDialog.querySelector('.zd-input');
+
+  function openZoomDialog(p) {
+    zoomInput.value = String(Math.round(state.panes[p.index].zoom * 100));
+    if (openPopup(zoomDialog, p, p.zoomBtn)) focusInput(zoomInput);
+  }
+
+  zoomDialog.querySelector('form').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!popup) return;
+    const v = Number(zoomInput.value.trim());
+    if (!Number.isFinite(v) || v < ZOOM_MIN || v > ZOOM_MAX) {
+      popupError(zoomDialog, ZOOM_MIN + '〜' + ZOOM_MAX + ' の数で入れてください', zoomInput);
+      return;
+    }
+    setZoom(popup.p, v / 100);
+    closePopup();
+  });
+  zoomDialog.querySelector('.zd-reset').addEventListener('click', () => {
+    if (popup) setZoom(popup.p, 1);
+    closePopup();
+  });
+
+  // ---- 自動の再読み込み ---------------------------------------------------
+  //
+  // 枠ごとに間隔 (state.panes[i].reload 秒) を覚え、その枠のページを読み直す。
+  // 次の読み直しまでの時間は、ページの読み込みが終わったところから数え直す
+  // (読み込みに間隔より長くかかるページを、途中で読み直し続けないため。
+  // 枠の中でリンクを押して移ったときも、そこから数え直す)。
+  // 次のときは読み直さず、次の回に回す:
+  // - 枠が空のとき、読み込みの途中のとき
+  // - POST で開いたページ (読み直すと Firefox が再送信の確認を出す。送信を繰り返させない)
+  // - 枠の中の入力欄に焦点があるとき (打ちかけの文字を消さないため)
+
+  const RELOAD_MAX_MIN = 1440;
+  /** 読み込みの途中とみなす長さの上限。これを過ぎたら止まっているとみなして読み直す */
+  const LOADING_STALE_MS = 60000;
+  const reloadDialog = document.getElementById('reload-dialog');
+  const reloadMin = reloadDialog.querySelector('.rd-min');
+  const reloadSec = reloadDialog.querySelector('.rd-sec');
+
+  for (const el of [zoomDialog, reloadDialog]) {
+    el.querySelector('.zd-close').addEventListener('click', closePopup);
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') closePopup();
+    });
+  }
+
+  /** 125 秒 -> 「2分5秒」 */
+  function formatInterval(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return (m ? m + '分' : '') + (s ? s + '秒' : '');
+  }
+
+  function showAutoReload(p) {
+    const sec = state.panes[p.index].reload;
+    const btn = p.autoBtn;
+    // 狭い枠では間隔の文字を隠す (CSS)。間隔は title で分かる
+    btn.querySelector('.auto-text').textContent = sec ? formatInterval(sec) : '';
+    btn.classList.toggle('on', sec > 0);
+    btn.classList.toggle('paused', sec > 0 && !!p.posted);
+    if (!sec) btn.title = '自動で再読み込みする間隔を指定する';
+    else if (p.posted) btn.title = formatInterval(sec) + 'ごとに自動で再読み込み (いまは POST で開いたページなので止めている。別のページに移ると再開する)';
+    else btn.title = formatInterval(sec) + 'ごとに自動で再読み込み (押すと変更)';
+  }
+
+  /** 次の自動の再読み込みを、今から間隔の後に置き直す。 */
+  function armAutoReload(p) {
+    clearTimeout(p.autoTimer);
+    p.autoTimer = null;
+    const sec = state.panes[p.index].reload;
+    if (sec > 0) p.autoTimer = setTimeout(() => autoReload(p), sec * 1000);
+  }
+
+  const AUTO_RELOAD_CODE = `(() => {
+    const a = document.activeElement;
+    const typing = a && (a.isContentEditable || /^(textarea|select)$/i.test(a.tagName) ||
+      (/^input$/i.test(a.tagName) && !/^(button|submit|reset|checkbox|radio|image|range|color|file|hidden)$/i.test(a.type)));
+    if (typing && document.hasFocus()) return 'typing';
+    location.reload();
+    return 'reloaded';
+  })()`;
+
+  async function autoReload(p) {
+    armAutoReload(p); // 読み込みが終われば、そこから数え直す
+    if (!p.current || p.posted) return;
+    if (p.loadingSince && Date.now() - p.loadingSince < LOADING_STALE_MS) return;
+    const frameId = browser.runtime.getFrameId(p.iframe);
+    if (tabId === null || frameId < 0) return;
+    try {
+      await browser.tabs.executeScript(tabId, { frameId, code: AUTO_RELOAD_CODE });
+    } catch {
+      // エラーページなどで差し込めないときは、覚えている URL を読み直す
+      p.iframe.src = p.current;
+    }
+  }
+
+  function setAutoReload(p, sec) {
+    state.panes[p.index].reload = sec;
+    showAutoReload(p);
+    armAutoReload(p);
+    saveSoon();
+  }
+
+  function openReloadDialog(p) {
+    const sec = state.panes[p.index].reload;
+    reloadMin.value = String(Math.floor(sec / 60));
+    reloadSec.value = String(sec % 60);
+    // 分だけの指定なら分の欄、それ以外は秒の欄に焦点を置く
+    if (openPopup(reloadDialog, p, p.autoBtn)) focusInput(sec && !(sec % 60) ? reloadMin : reloadSec);
+  }
+
+  /** 空欄は 0。0 以上の整数でなければ NaN */
+  function readCount(input) {
+    const t = input.value.trim();
+    if (!t) return 0;
+    return /^\d+$/.test(t) ? Number(t) : NaN;
+  }
+
+  reloadDialog.querySelector('form').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    if (!popup) return;
+    const m = readCount(reloadMin);
+    const sec = readCount(reloadSec);
+    if (!Number.isInteger(m) || m > RELOAD_MAX_MIN) {
+      popupError(reloadDialog, '分は 0〜' + RELOAD_MAX_MIN + ' の整数で入れてください', reloadMin);
+      return;
+    }
+    if (!Number.isInteger(sec) || sec > 59) {
+      popupError(reloadDialog, '秒は 0〜59 の整数で入れてください', reloadSec);
+      return;
+    }
+    // 0 分 0 秒は「更新なし」
+    setAutoReload(popup.p, m * 60 + sec);
+    closePopup();
+  });
+  reloadDialog.querySelector('.rd-off').addEventListener('click', () => {
+    if (popup) setAutoReload(popup.p, 0);
+    closePopup();
+  });
+
+  // 枠のページの読み込みの始まりと終わり、POST で開いたかを追う
+
+  function paneOfFrame(details) {
+    if (details.tabId !== tabId || details.frameId === 0) return null;
+    return paneByFrameId(details.frameId);
+  }
+
+  browser.webNavigation.onBeforeNavigate.addListener((d) => {
+    const p = paneOfFrame(d);
+    if (p) p.loadingSince = Date.now();
+  });
+  for (const ev of [browser.webNavigation.onCompleted, browser.webNavigation.onErrorOccurred]) {
+    ev.addListener((d) => {
+      const p = paneOfFrame(d);
+      if (!p) return;
+      p.loadingSince = 0;
+      armAutoReload(p);
+    });
+  }
+  // 枠の文書の要求 (転送されたら転送先の要求) の method を覚え、読み込みが確定したときに見る。
+  // 戻る・進むでキャッシュから出たページは要求が無いので、POST ではないとみなす。
+  browser.webRequest.onBeforeRequest.addListener(
+    (d) => {
+      const p = paneOfFrame(d);
+      if (p) p.lastRequest = { url: d.url, method: d.method };
+    },
+    { urls: ['<all_urls>'], types: ['sub_frame'] }
+  );
+  browser.webNavigation.onCommitted.addListener((d) => {
+    const p = paneOfFrame(d);
+    if (!p) return;
+    const req = p.lastRequest;
+    p.lastRequest = null;
+    const noHash = (u) => u.split('#')[0];
+    p.posted = !!req && req.method === 'POST' && noHash(req.url) === noHash(d.url);
+    showAutoReload(p);
   });
 
   /** 枠の中の履歴を動かす。枠の中は別のサイトなので、差し込んだスクリプトで行う。 */
@@ -344,6 +518,9 @@
         break;
       case 'zoomdialog':
         openZoomDialog(p);
+        break;
+      case 'autoreload':
+        openReloadDialog(p);
         break;
       case 'max':
         toggleMax(p.index);
@@ -648,11 +825,14 @@
     tabId = hello && hello.tabId;
     state = await NarabeeState.load(boardId);
     buildLayoutButtons();
-    showBar();
+    // 帯は board のタブを足したときだけ出す (読み直したときは出さない。背景が決める)
+    if (hello && hello.showBar) showBar();
     for (let i = 0; i < NarabeeState.MAX_PANES; i += 1) panes.push(createPane(i));
     place();
     for (const p of panes) {
       applyZoom(p);
+      showAutoReload(p);
+      armAutoReload(p);
       const url = state.panes[p.index].url;
       showUrl(p, url);
       const sc = state.panes[p.index].scroll;
