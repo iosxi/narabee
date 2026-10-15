@@ -369,6 +369,29 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 
 follient 側を変える必要があり、上の公開は安全性を下げるので、2026-10-14 に見送った。
 
+### 枠ごとに別のコンテナ (Multi-Account Containers) で開く (見送り)
+
+「メールなどをアカウントごとにコンテナで分けているので、枠ごとに別のコンテナで開きたい」と
+要望を受けた (2026-10-15)。Firefox 158 で実測した結果、枠ごとにはできない。
+
+| 確かめたこと | 結果 |
+| --- | --- |
+| board を `tabs.create({ cookieStoreId: 'firefox-container-1' })` で開く | 開ける (タブの `cookieStoreId` は `firefox-container-1`) |
+| その board の枠 2 つ | どちらも container-1 のクッキー (送信・`document.cookie`) と localStorage を使う |
+| 普通の board の枠 | container-1 のクッキー・localStorage は見えない |
+| 枠 (iframe) ごとにコンテナを指定する API | 無い。コンテナはタブ全体に付く |
+| `tabs.update(id, { cookieStoreId })` | `Unexpected property "cookieStoreId"` (作った後は変えられない) |
+
+webRequest でクッキーの送受信だけを枠ごとに差し替える擬似コンテナはありうるが、
+localStorage・IndexedDB・Service Worker・`document.cookie` は分けられず、セキュリティの
+ためという目的に合わないので採らなかった。board 単位でコンテナを選ぶ案 (その board の枠は
+すべてそのコンテナ。ログイン用のタブや復元も同じコンテナで開く必要がある) も示したが、
+利用者の判断で見送った。
+
+なお Firefox 158 は 2 つのタブを 1 つのウィンドウに並べる Split View を既定で有効にしている
+(`browser.tabs.splitView.enabled` が true、タブの右クリックに「分割ビュー」系の項目)。
+コンテナの違うタブ同士を並べられるかは確かめていない。
+
 ## 作業手順
 
 ### 開発時の読み込み
