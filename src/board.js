@@ -141,7 +141,9 @@
       /** 枠の中で今表示している URL (webNavigation で追う) */
       current: '',
     };
-    el.querySelector('.num').textContent = String(index + 1);
+    const num = el.querySelector('.num');
+    num.textContent = String(index + 1);
+    num.addEventListener('pointerdown', (ev) => startUrlDrag(p, ev));
 
     el.querySelector('.go').addEventListener('submit', (ev) => {
       ev.preventDefault();
@@ -271,6 +273,7 @@
     // 見えなくなった入力欄に焦点を残さない
     if (el.contains(document.activeElement)) document.activeElement.blur();
     el.hidden = true;
+    if (el === reloadDialog) resumeAutoReload();
   }
 
   function focusInput(input) {
@@ -339,6 +342,9 @@
   // - 枠が空のとき、読み込みの途中のとき
   // - POST で開いたページ (読み直すと Firefox が再送信の確認を出す。送信を繰り返させない)
   // - 枠の中の入力欄に焦点があるとき (打ちかけの文字を消さないため)
+  // - 自動の再読み込みのダイアログを開いているとき (どの枠も)。読み込んだページが焦点を
+  //   取ると board から焦点が外れ、入力中のダイアログが閉じてしまうため。閉じたら、
+  //   その間に時刻が来た枠をすぐ読み直す
 
   const RELOAD_MAX_MIN = 1440;
   /** 読み込みの途中とみなす長さの上限。これを過ぎたら止まっているとみなして読み直す */
@@ -394,6 +400,10 @@
     armAutoReload(p); // 読み込みが終われば、そこから数え直す
     if (!p.current || p.posted) return;
     if (p.loadingSince && Date.now() - p.loadingSince < LOADING_STALE_MS) return;
+    if (popup && popup.el === reloadDialog) {
+      p.autoDue = true;
+      return;
+    }
     const frameId = browser.runtime.getFrameId(p.iframe);
     if (tabId === null || frameId < 0) return;
     try {
@@ -404,7 +414,18 @@
     }
   }
 
+  /** ダイアログを開いている間に時刻が来た枠を読み直す */
+  function resumeAutoReload() {
+    for (const p of panes) {
+      if (!p.autoDue) continue;
+      p.autoDue = false;
+      if (state.panes[p.index].reload > 0) autoReload(p);
+    }
+  }
+
   function setAutoReload(p, sec) {
+    // 間隔を変えた枠は、新しい間隔で数え直す (閉じたときにすぐ読み直さない)
+    p.autoDue = false;
     state.panes[p.index].reload = sec;
     showAutoReload(p);
     armAutoReload(p);
@@ -638,6 +659,72 @@
     el.addEventListener('pointermove', move);
     el.addEventListener('pointerup', end);
     el.addEventListener('pointercancel', end);
+  }
+
+  // ---- 枠の番号のドラッグで URL を写す ---------------------------------------
+  //
+  // 見出しの丸付き数字を別の枠に落とすと、その枠に同じ URL を読み込む (倍率や自動の
+  // 再読み込みは落とした先の枠のまま)。HTML のドラッグ & ドロップは使わない。iframe の
+  // 上ではドラッグのイベントが board に届かないため。境目のドラッグと同じく、押している間は
+  // body.dragging で iframe がポインタを奪わないようにし、落とした位置の枠を探す。
+  // 少し動かすまではドラッグとみなさない (クリックや見出しのダブルクリックを妨げない)。
+
+  const URL_DRAG_PX = 4;
+
+  function startUrlDrag(src, ev) {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const num = ev.currentTarget;
+    try {
+      num.setPointerCapture(ev.pointerId);
+    } catch {
+      // 捕捉できなくても、押している間は iframe がポインタを奪わないので続けられる
+    }
+    document.body.classList.add('dragging');
+    const x0 = ev.clientX;
+    const y0 = ev.clientY;
+    let ghost = null;
+    let target = null;
+
+    const paneAt = (x, y) => {
+      const hit = document.elementFromPoint(x, y);
+      const el = hit && hit.closest('.pane');
+      const p = el && panes.find((q) => q.el === el);
+      return p && p !== src ? p : null;
+    };
+    const setTarget = (p) => {
+      if (target === p) return;
+      if (target) target.el.classList.remove('drop-target');
+      target = p;
+      if (target) target.el.classList.add('drop-target');
+    };
+    const move = (e) => {
+      if (!ghost) {
+        // 空の枠からは写すものが無い
+        if (!src.current || Math.hypot(e.clientX - x0, e.clientY - y0) < URL_DRAG_PX) return;
+        ghost = document.createElement('div');
+        ghost.className = 'url-ghost';
+        ghost.textContent = String(src.index + 1);
+        document.body.append(ghost);
+        document.body.classList.add('moving-url');
+      }
+      ghost.style.left = e.clientX + 'px';
+      ghost.style.top = e.clientY + 'px';
+      setTarget(paneAt(e.clientX, e.clientY));
+    };
+    const end = (e) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      document.body.classList.remove('dragging', 'moving-url');
+      const dest = ghost && e.type === 'pointerup' ? paneAt(e.clientX, e.clientY) : null;
+      if (ghost) ghost.remove();
+      setTarget(null);
+      if (dest && src.current) loadPane(dest.index, src.current);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
   }
 
   /** 'r.1.0' のような経路から節を引く。 */
