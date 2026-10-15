@@ -15,6 +15,11 @@ var NarabeeState = (() => {
       /** sizes[レイアウトID][分割の経路] = 子の比率 (合計 1) */
       sizes: {},
       /**
+       * order[置き場所] = その置き場所に出す枠 (panes の添字)。番号 (①〜④) や「枠に送る」の
+       * 枠 N は置き場所で数える。枠の入れ替えは、iframe を読み込み直さないよう、ここだけを変える。
+       */
+      order: Array.from({ length: MAX_PANES }, (_, i) => i),
+      /**
        * scroll は board を読み直したときに戻すスクロール位置 ({ url, x, y } か null)。
        * reload は自動で再読み込みする間隔 (秒)。0 は自動では読み直さない。
        */
@@ -29,6 +34,9 @@ var NarabeeState = (() => {
     if (typeof raw.layout === 'string') s.layout = raw.layout;
     if (Number.isFinite(raw.updatedAt)) s.updatedAt = raw.updatedAt;
     if (raw.sizes && typeof raw.sizes === 'object') s.sizes = raw.sizes;
+    if (Array.isArray(raw.order) && raw.order.length === MAX_PANES && [...raw.order].sort().every((v, i) => v === i)) {
+      s.order = raw.order.slice();
+    }
     if (Array.isArray(raw.panes)) {
       for (let i = 0; i < MAX_PANES; i += 1) {
         const p = raw.panes[i];

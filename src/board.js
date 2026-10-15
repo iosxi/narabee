@@ -13,7 +13,7 @@
   const boardId = new URLSearchParams(location.search).get('b') || '';
   let state = NarabeeState.blank();
   let tabId = null;
-  /** その枠だけを大きくしているときの枠の番号。していなければ null。 */
+  /** その枠だけを大きくしているときの置き場所 (state.order の添字)。していなければ null。 */
   let maxed = null;
   const panes = [];
   let dividerEls = [];
@@ -128,6 +128,18 @@
   document.getElementById('bar-close').addEventListener('click', hideBar);
 
   // ---- 枠 ---------------------------------------------------------------
+  //
+  // panes[i] は iframe を持つ枠そのもの (i は保存の state.panes の添字)。画面のどこに出すかは
+  // 置き場所 (slot) で、state.order[slot] = i。番号 (①〜④)・「枠に送る」の枠 N・題名に使う
+  // 枠 1・大きくした枠は置き場所で数える。入れ替えは order だけを変える (iframe は動かさない)。
+
+  function slotOf(p) {
+    return state.order.indexOf(p.index);
+  }
+
+  function paneInSlot(slot) {
+    return panes[state.order[slot]];
+  }
 
   function createPane(index) {
     const el = tpl.content.firstElementChild.cloneNode(true);
@@ -142,7 +154,6 @@
       current: '',
     };
     const num = el.querySelector('.num');
-    num.textContent = String(index + 1);
     num.addEventListener('pointerdown', (ev) => startUrlDrag(p, ev));
 
     el.querySelector('.go').addEventListener('submit', (ev) => {
@@ -169,7 +180,7 @@
     });
     el.querySelector('header').addEventListener('dblclick', (ev) => {
       if (ev.target.closest('button, input')) return;
-      toggleMax(index);
+      toggleMax(slotOf(p));
     });
 
     new ResizeObserver(() => {
@@ -185,7 +196,7 @@
     // 題名は frame.js が知らせる。新しいページは自分で知らせてくるので、ここで消すのは
     // 枠を空にしたときだけ (# の変化やページ内の切り替えでは知らせが来ないため)
     if (!url) p.title = '';
-    if (p.index === 0) updateDocTitle();
+    if (slotOf(p) === 0) updateDocTitle();
     if (document.activeElement !== p.input) p.input.value = url;
     p.el.classList.toggle('is-empty', !url);
     p.input.title = url;
@@ -207,7 +218,7 @@
     armAutoReload(p);
     showUrl(p, '');
     p.iframe.src = 'about:blank';
-    if (maxed === p.index) {
+    if (maxed === slotOf(p)) {
       maxed = null;
       place();
     }
@@ -544,7 +555,7 @@
         openReloadDialog(p);
         break;
       case 'max':
-        toggleMax(p.index);
+        toggleMax(slotOf(p));
         break;
       case 'close':
         closePane(p);
@@ -557,8 +568,8 @@
     }
   }
 
-  function toggleMax(index) {
-    maxed = maxed === index ? null : index;
+  function toggleMax(slot) {
+    maxed = maxed === slot ? null : slot;
     place();
   }
 
@@ -582,12 +593,17 @@
       rects = [{ index: maxed, x: 0, y: 0, w: 1, h: 1 }];
       dividers = [];
     }
+    // r.index は置き場所
     const shown = new Set();
     for (const r of rects) {
-      shown.add(r.index);
-      setRect(panes[r.index].el, r);
+      const p = paneInSlot(r.index);
+      shown.add(p);
+      setRect(p.el, r);
     }
-    for (const p of panes) p.el.hidden = !shown.has(p.index);
+    for (const p of panes) {
+      p.el.hidden = !shown.has(p);
+      p.el.querySelector('.num').textContent = String(slotOf(p) + 1);
+    }
 
     while (dividerEls.length > dividers.length) dividerEls.pop().remove();
     while (dividerEls.length < dividers.length) {
@@ -661,15 +677,30 @@
     el.addEventListener('pointercancel', end);
   }
 
-  // ---- 枠の番号のドラッグで URL を写す ---------------------------------------
+  // ---- 枠の番号のドラッグで入れ替え・コピー ----------------------------------------
   //
-  // 見出しの丸付き数字を別の枠に落とすと、その枠に同じ URL を読み込む (倍率や自動の
-  // 再読み込みは落とした先の枠のまま)。HTML のドラッグ & ドロップは使わない。iframe の
-  // 上ではドラッグのイベントが board に届かないため。境目のドラッグと同じく、押している間は
-  // body.dragging で iframe がポインタを奪わないようにし、落とした位置の枠を探す。
-  // 少し動かすまではドラッグとみなさない (クリックや見出しのダブルクリックを妨げない)。
+  // 見出しの丸付き数字を別の枠に落とす。落とした先の枠の左半分なら入れ替え、右半分ならコピー。
+  // - 入れ替え: 2 つの枠の置き場所 (state.order) を交換する。iframe は読み込み直さないので、
+  //   中のページ (ログイン後の画面・入力中の内容・動画) も倍率・自動の再読み込みもそのまま移る。
+  // - コピー: 落とした先の枠に同じ URL を読み込む (倍率や自動の再読み込みは先の枠のまま)。
+  // HTML のドラッグ & ドロップは使わない。iframe の上ではドラッグのイベントが board に届かない
+  // ため。境目のドラッグと同じく、押している間は body.dragging で iframe がポインタを奪わない
+  // ようにし、落とした位置の枠を探す。少し動かすまではドラッグとみなさない (クリックや見出しの
+  // ダブルクリックを妨げない)。空の枠からはドラッグしない。
 
   const URL_DRAG_PX = 4;
+  const CIRCLED = ['①', '②', '③', '④'];
+
+  /** 置き場所を入れ替える。 */
+  function swapPanes(a, b) {
+    const sa = slotOf(a);
+    const sb = slotOf(b);
+    state.order[sa] = b.index;
+    state.order[sb] = a.index;
+    place();
+    updateDocTitle();
+    saveSoon();
+  }
 
   function startUrlDrag(src, ev) {
     if (ev.button !== 0) return;
@@ -684,43 +715,53 @@
     const x0 = ev.clientX;
     const y0 = ev.clientY;
     let ghost = null;
-    let target = null;
+    /** { p, mode: 'swap' | 'copy' } か null */
+    let drop = null;
 
-    const paneAt = (x, y) => {
+    const dropAt = (x, y) => {
       const hit = document.elementFromPoint(x, y);
       const el = hit && hit.closest('.pane');
       const p = el && panes.find((q) => q.el === el);
-      return p && p !== src ? p : null;
+      if (!p || p === src) return null;
+      const r = el.getBoundingClientRect();
+      return { p, mode: x < r.left + r.width / 2 ? 'swap' : 'copy' };
     };
-    const setTarget = (p) => {
-      if (target === p) return;
-      if (target) target.el.classList.remove('drop-target');
-      target = p;
-      if (target) target.el.classList.add('drop-target');
+    const showDrop = (d) => {
+      if (drop && (!d || d.p !== drop.p)) drop.p.el.classList.remove('drop-target', 'drop-swap', 'drop-copy');
+      drop = d;
+      if (!d) return;
+      const from = CIRCLED[slotOf(src)];
+      const to = CIRCLED[slotOf(d.p)];
+      d.p.el.querySelector('.dz-swap small').textContent = from + ' と ' + to + ' の場所を入れ替える';
+      d.p.el.querySelector('.dz-copy small').textContent = from + ' の URL を ' + to + ' で開く';
+      d.p.el.classList.add('drop-target');
+      d.p.el.classList.toggle('drop-swap', d.mode === 'swap');
+      d.p.el.classList.toggle('drop-copy', d.mode === 'copy');
     };
     const move = (e) => {
       if (!ghost) {
-        // 空の枠からは写すものが無い
         if (!src.current || Math.hypot(e.clientX - x0, e.clientY - y0) < URL_DRAG_PX) return;
         ghost = document.createElement('div');
         ghost.className = 'url-ghost';
-        ghost.textContent = String(src.index + 1);
+        ghost.textContent = String(slotOf(src) + 1);
         document.body.append(ghost);
         document.body.classList.add('moving-url');
       }
       ghost.style.left = e.clientX + 'px';
       ghost.style.top = e.clientY + 'px';
-      setTarget(paneAt(e.clientX, e.clientY));
+      showDrop(dropAt(e.clientX, e.clientY));
     };
     const end = (e) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end);
       window.removeEventListener('pointercancel', end);
       document.body.classList.remove('dragging', 'moving-url');
-      const dest = ghost && e.type === 'pointerup' ? paneAt(e.clientX, e.clientY) : null;
+      const d = ghost && e.type === 'pointerup' ? dropAt(e.clientX, e.clientY) : null;
       if (ghost) ghost.remove();
-      setTarget(null);
-      if (dest && src.current) loadPane(dest.index, src.current);
+      showDrop(null);
+      if (!d || !src.current) return;
+      if (d.mode === 'swap') swapPanes(src, d.p);
+      else loadPane(d.p.index, src.current);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', end);
@@ -826,7 +867,7 @@
   // 「narabee(題名)」にする。枠の中は別のサイトなので題名は frame.js が知らせる。
 
   function updateDocTitle() {
-    const p = panes[0];
+    const p = paneInSlot(0);
     const title = p && p.current && p.title ? p.title.trim() : '';
     document.title = title ? 'narabee(' + title + ')' : 'narabee';
   }
@@ -836,17 +877,17 @@
     const p = paneByFrameId(sender.frameId);
     if (!p) return;
     p.title = msg.title;
-    if (p.index === 0) updateDocTitle();
+    if (slotOf(p) === 0) updateDocTitle();
   }
 
   // ---- 背景からの指示 ---------------------------------------------------
 
-  /** 枠を index 番まで見せられるレイアウトに切り替える (足りないときだけ)。 */
-  function ensureVisible(index) {
-    if (maxed !== null && maxed !== index) maxed = null;
+  /** 置き場所 slot まで見せられるレイアウトに切り替える (足りないときだけ)。 */
+  function ensureVisible(slot) {
+    if (maxed !== null && maxed !== slot) maxed = null;
     const layout = NarabeeLayouts.get(state.layout);
-    if (NarabeeLayouts.count(layout.tree) > index) return;
-    setLayout(['one', 'h2', 'h3', 'g22'][index] || 'g22');
+    if (NarabeeLayouts.count(layout.tree) > slot) return;
+    setLayout(['one', 'h2', 'h3', 'g22'][slot] || 'g22');
   }
 
   browser.runtime.onMessage.addListener((msg, sender) => {
@@ -863,10 +904,10 @@
       recordScroll(msg, sender);
       return undefined;
     }
-    // tabId が付いていれば、その board 宛て (ウィンドウごとに board があるため)
-    if (msg.type === 'load' && Number.isInteger(msg.index) && panes[msg.index] && (msg.tabId === undefined || msg.tabId === tabId)) {
+    // tabId が付いていれば、その board 宛て (ウィンドウごとに board があるため)。index は置き場所 (枠 N)
+    if (msg.type === 'load' && Number.isInteger(msg.index) && paneInSlot(msg.index) && (msg.tabId === undefined || msg.tabId === tabId)) {
       ensureVisible(msg.index);
-      loadPane(msg.index, msg.url);
+      loadPane(paneInSlot(msg.index).index, msg.url);
       place();
       return Promise.resolve({ ok: true });
     }

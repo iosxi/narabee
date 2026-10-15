@@ -377,7 +377,7 @@
     }
     const boardId = target ? boardIdOf(target.url) : newBoardId();
     const state = target ? await NarabeeState.load(boardId) : NarabeeState.blank();
-    state.panes[index].url = url;
+    state.panes[state.order[index]].url = url; // index は置き場所 (枠 N)
     if (!target) state.layout = ['one', 'h2', 'h3', 'g22'][index] || 'g22';
     await NarabeeState.save(state, boardId);
     if (target) await browser.tabs.update(target.id, { active: true });
