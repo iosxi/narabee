@@ -251,6 +251,41 @@ v12 では **board のタブを足したときだけ** 出す。
   「① と ④ の場所を入れ替える」「① の URL を ④ で開く」と書く。ポインタについてくる番号は、
   この文字に重ならないようポインタの右下に出す。
 
+### YouTube のチャット欄の合図を中継する (v15)
+
+ライブのチャット欄 (watch ページの中の `live_chat` の iframe) の × を押しても、欄が畳まれなかった。
+`live_chat_polymer.js` は watch ページへの合図をこう送る:
+
+```js
+function Kv(a,b,c){var d={};d[a]=b;
+  try{window.top.postMessage(d,ql("POST_TO_PARENT_DOMAIN","https://www.youtube.com"),c)}catch(e){Po(e)}}
+g.onYtSignalActionHideLiveChat=function(){Kv("yt-hide-live-chat","*")}
+```
+
+普通のタブなら `top` は watch ページだが、枠の中では board なので、宛先の origin が合わずに Firefox が
+黙って捨てる (例外も出ない)。× のほかに、メンバーシップの購入 (`yt-purchase-membership`)・購入画面
+(`yt-iframed-buyflow-launcher`)・入力欄の状態 (`yt-live-chat-interaction-event`) なども同じ道で、
+すべて届いていなかった。`top` は上書きできない (v5 の `parent` の件)。
+
+- `frame.js` は board の孫以下の枠にも差し込まれる。YouTube の `/live_chat` の枠では、
+  `yt.config_.POST_TO_PARENT_DOMAIN` を board の origin に書き換える (`ql` は `yt.config_` を読む)。
+  差し込みの時点で `yt.config_` が無いこともあるので、`DOMContentLoaded` と `load` でもやり直す。
+- board は `message` を受け、送り主の `parent` (別 origin でも読める) が枠のページで、枠のページの
+  origin が `https://www.youtube.com` なら、送り主が `parent.frames` の何番目かを調べ、
+  `tabs.sendMessage(..., { frameId: 枠 })` で `relay-message` を送る。
+- 枠の `frame.js` は、`window.frames[番号]` を `source` にした `MessageEvent` をページに起こす。
+  watch ページは `source` がチャット欄であることを確かめていて、`source` 無しの合成イベントは無視された。
+  `isTrusted` は見ていない。
+
+チャット欄を畳んだ後の「チャットを表示」(`#show-hide-button`) は、普通のタブでも大きさ 0 で押せない
+(今の YouTube の作り)。narabee の問題ではない。
+
+チャット欄が「このページを開けません」(埋め込み拒否) になることがある、という報告もあったが再現していない
+(ライブ 4 本を並べて × ・読み直しを 7 周、0 件)。YouTube はチャット欄の読み込みを一度取り消して
+入れ直すことがあり (`NS_BINDING_ABORTED`)、Service Worker 経由の取り直しを見分ける `swExpected` を
+一度使うと消すので、取り消した方の取り直しが後から来ると足りなくなる、という見当はある。記録では
+起きていない (枠の要求 29・取り消し 13・Service Worker への振り替え 16・その取り直し 16) ので直していない。
+
 ### 枠の中の URL を追う
 
 枠は別のサイトなので `iframe.contentWindow.location` は読めない。board 自身が
@@ -397,6 +432,13 @@ iframe を別の親へ移すと読み込み直しになる。枠は `#stage` の
 | v14 入れ替えた後に「枠 1 に送る」 / ① をダブルクリック / board を読み直す / 左右 2 つに切り替え | 左上に入る / 左上の枠だけ大きくなる / 並びが残る / 左上と右上にあった枠が出る |
 | v14 本物のマウス (Web ページとして開いた写し): ① を ④ の右半分 → 左半分 → 落とす | 表示が「コピー」側から「入れ替え」側へ移り、落とすと入れ替わる。iframe の `src` は元のまま |
 | v14 自動の再読み込み 20 項目、ダイアログ中の停止、v13 の番号のドラッグ | v13 と同じ結果 |
+| YouTube ライブのチャット欄の × (v14、Firefox 158) | 普通のタブは `yt-hide-live-chat` が watch ページに届き畳まれる。枠は何も届かず、中の iframe が about:blank になるだけで欄は残る |
+| チャット欄の `top` / `location.ancestorOrigins` (枠の中) | `top !== parent`、`["https://www.youtube.com", "moz-extension://…"]` |
+| 枠の watch ページに `yt-hide-live-chat` の合成 `MessageEvent` (source 無し / source = チャット欄) | 畳まれない / 畳まれる |
+| v15: 枠の中でチャット欄の × | 畳まれる (`collapsed`、高さ 0) |
+| v15: ライブ 4 本を並べて × → 読み直し (計 7 周 28 回) | 27 回畳まれる。外れた 1 回も宛先の書き換えは効いていた (クリックが当たらなかったとみている) |
+| v15: 4 本を開いて読み直し 5 回、チャット欄の `POST_TO_PARENT_DOMAIN` | 19 / 19 が board の origin |
+| v15: 楽天風フォーム・本体 24 項目・スクロール位置・題名の試験 | v14 までと同じ結果 |
 | v12 署名済み XPI を正式に入れ、枠 1 を 10 秒にして Firefox を終了 → 起動してボタン | 復元した board の見出しが ⏱10秒、21 秒で 2 回読み直す。その board を読み直すと帯は出ない |
 
 ここで言う「分離されない」は、Firefox の Total Cookie Protection が

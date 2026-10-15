@@ -14,8 +14,39 @@
 (() => {
   if (window.__narabeeFrame) return;
   window.__narabeeFrame = true;
-  // board の直下の枠だけ。もっと深い枠の _parent は親の枠を指すので正しい。
-  if (window === window.top || window.parent !== window.top) return;
+  if (window === window.top) return;
+
+  // YouTube のチャット欄 (watch ページの中の live_chat の iframe) は、× などの合図を
+  // window.top.postMessage(合図, POST_TO_PARENT_DOMAIN = 'https://www.youtube.com') で
+  // watch ページに送る。枠の中では top が board なので宛先の origin が合わず、Firefox が
+  // 捨てていた (× を押しても欄が畳まれない)。宛先を board の origin に変えて board に
+  // 届かせ、board が枠の watch ページに渡し直す (下の relay-message)。
+  if (window.parent !== window.top) {
+    if (location.origin === 'https://www.youtube.com' && location.pathname.startsWith('/live_chat')) {
+      const boardOrigin = new URL(browser.runtime.getURL('')).origin;
+      const retarget = () => {
+        const yt = window.wrappedJSObject.yt;
+        if (yt && yt.config_) yt.config_.POST_TO_PARENT_DOMAIN = boardOrigin;
+      };
+      retarget();
+      document.addEventListener('DOMContentLoaded', retarget, { once: true });
+      window.addEventListener('load', retarget, { once: true });
+    }
+    // ほかは board の直下の枠だけ。もっと深い枠の _parent は親の枠を指すので正しい。
+    return;
+  }
+
+  // board から: 子の iframe (window.frames[index]) が top に送った合図を、普通のタブで
+  // top だったこのページに届け直す。YouTube は送り主 (source) がチャット欄であることを
+  // 確かめるので、source を付ける (付けないと無視された)。
+  browser.runtime.onMessage.addListener((msg) => {
+    if (!msg || msg.type !== 'relay-message') return undefined;
+    const page = window.wrappedJSObject;
+    const source = page.frames[msg.index];
+    if (!source) return undefined;
+    window.dispatchEvent(new MessageEvent('message', { data: cloneInto(msg.data, page), origin: msg.origin, source }));
+    return undefined;
+  });
 
   // 楽天証券の会員ページのメニュー (125 個) は onclick で memberPageJump() を呼ぶ。
   // memberPageJump() は typeof parent.IFAWebMain を調べるが、枠の parent は

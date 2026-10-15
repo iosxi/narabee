@@ -880,6 +880,47 @@
     if (slotOf(p) === 0) updateDocTitle();
   }
 
+  // ---- 枠の中の子の iframe から top への合図 ------------------------------------
+  //
+  // YouTube のチャット欄は × などの合図を window.top に送る。普通のタブなら top は watch
+  // ページだが、枠の中では board になる。frame.js が宛先を board の origin に変えさせて
+  // いるので、ここに届いたものを、送り主の親 (枠のページ) に渡し直す。送り主が枠の
+  // ページそのもの・枠の外の場合や、枠のページと origin が違う場合は渡さない。
+
+  window.addEventListener('message', (ev) => {
+    const src = ev.source;
+    if (!src || tabId === null || ev.origin !== 'https://www.youtube.com') return;
+    let parentWin;
+    try {
+      parentWin = src.parent;
+    } catch {
+      return;
+    }
+    const p = panes.find((q) => q.iframe.contentWindow === parentWin && q.iframe.contentWindow !== src);
+    if (!p || !p.current) return;
+    try {
+      if (new URL(p.current).origin !== ev.origin) return;
+    } catch {
+      return;
+    }
+    let index = -1;
+    for (let i = 0; i < parentWin.length; i += 1) {
+      if (parentWin[i] === src) {
+        index = i;
+        break;
+      }
+    }
+    const frameId = browser.runtime.getFrameId(p.iframe);
+    if (index < 0 || frameId < 0) return;
+    let data;
+    try {
+      data = JSON.parse(JSON.stringify(ev.data));
+    } catch {
+      return;
+    }
+    browser.tabs.sendMessage(tabId, { type: 'relay-message', index, data, origin: ev.origin }, { frameId }).catch(() => {});
+  });
+
   // ---- 背景からの指示 ---------------------------------------------------
 
   /** 置き場所 slot まで見せられるレイアウトに切り替える (足りないときだけ)。 */
