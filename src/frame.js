@@ -36,10 +36,49 @@
     return;
   }
 
+  // 自動の再読み込みが、利用者の打ちかけの文字を消さないための目印。利用者が実際に文字を
+  // 打った (isTrusted の input / compositionstart) 欄を覚え、board の自動の再読み込みが
+  // window.__narabeeIsTyping() で尋ねる (同じ拡張機能の content script は window を共有する)。
+  // 「入力欄に焦点がある」だけで判断すると、読み込むたびに自分で検索欄へ焦点を移すページ
+  // (日経のスマートチャート) で、自動の再読み込みがずっと止まっていた (v16 まで)。
+  const typedIn = new WeakSet();
+  const markTyped = (ev) => {
+    if (ev.isTrusted && ev.target instanceof Element) typedIn.add(ev.target);
+  };
+  document.addEventListener('input', markTyped, true);
+  document.addEventListener('compositionstart', markTyped, true);
+  /** 利用者が文字を打った欄に焦点があり、その欄に文字が残っているか */
+  window.__narabeeIsTyping = () => {
+    const a = document.activeElement;
+    if (!a || !typedIn.has(a)) return false;
+    const text = a.isContentEditable ? a.textContent : a.value;
+    return typeof text === 'string' && text.trim() !== '';
+  };
+
+  // 自動の再読み込みで別の枠に焦点を奪われたとき、board の指示 (refocus) で、最後に焦点の
+  // あった欄へ戻す。board から iframe に focus() するだけでは、中の欄までは戻らなかった。
+  let lastFocused = null;
+  document.addEventListener('focusin', (ev) => {
+    if (ev.target instanceof Element) lastFocused = ev.target;
+  }, true);
+  // 利用者がこの枠を押した・打ったことを board に知らせる (board は焦点の見張りをやめる)
+  let lastUserInput = 0;
+  const reportUserInput = (ev) => {
+    if (!ev.isTrusted || Date.now() - lastUserInput < 500) return;
+    lastUserInput = Date.now();
+    browser.runtime.sendMessage({ type: 'frame-user-input' }).catch(() => {});
+  };
+  document.addEventListener('pointerdown', reportUserInput, true);
+  document.addEventListener('keydown', reportUserInput, true);
+
   // board から: 子の iframe (window.frames[index]) が top に送った合図を、普通のタブで
   // top だったこのページに届け直す。YouTube は送り主 (source) がチャット欄であることを
   // 確かめるので、source を付ける (付けないと無視された)。
   browser.runtime.onMessage.addListener((msg) => {
+    if (msg && msg.type === 'refocus') {
+      if (lastFocused && lastFocused.isConnected && lastFocused !== document.body) lastFocused.focus();
+      return undefined;
+    }
     if (!msg || msg.type !== 'relay-message') return undefined;
     const page = window.wrappedJSObject;
     const source = page.frames[msg.index];

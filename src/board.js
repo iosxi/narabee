@@ -354,7 +354,8 @@
   // 次のときは読み直さず、次の回に回す:
   // - 枠が空のとき、読み込みの途中 (本文ができる前) のとき
   // - POST で開いたページ (読み直すと Firefox が再送信の確認を出す。送信を繰り返させない)
-  // - 枠の中の入力欄に焦点があるとき (打ちかけの文字を消さないため)
+  // - 枠の中で利用者が文字を打った欄に焦点があり、文字が残っているとき (打ちかけの文字を
+  //   消さないため。ページが自分で入力欄に焦点を移しただけでは止めない。frame.js が見張る)
   // - 自動の再読み込みのダイアログを開いているとき (どの枠も)。読み込んだページが焦点を
   //   取ると board から焦点が外れ、入力中のダイアログが閉じてしまうため。閉じたら、
   //   その間に時刻が来た枠をすぐ読み直す
@@ -401,9 +402,7 @@
   }
 
   const AUTO_RELOAD_CODE = `(() => {
-    const a = document.activeElement;
-    const typing = a && (a.isContentEditable || /^(textarea|select)$/i.test(a.tagName) ||
-      (/^input$/i.test(a.tagName) && !/^(button|submit|reset|checkbox|radio|image|range|color|file|hidden)$/i.test(a.type)));
+    const typing = typeof window.__narabeeIsTyping === 'function' && window.__narabeeIsTyping();
     if (typing && document.hasFocus()) return 'typing';
     location.reload();
     return 'reloaded';
@@ -419,12 +418,98 @@
     }
     const frameId = browser.runtime.getFrameId(p.iframe);
     if (tabId === null || frameId < 0) return;
+    guardFocus(p);
+    let result = null;
     try {
-      await browser.tabs.executeScript(tabId, { frameId, code: AUTO_RELOAD_CODE });
+      [result] = await browser.tabs.executeScript(tabId, { frameId, code: AUTO_RELOAD_CODE });
     } catch {
       // エラーページなどで差し込めないときは、覚えている URL を読み直す
       p.iframe.src = p.current;
     }
+    if (result === 'typing') p.focusGuard = null;
+  }
+
+  // ---- 自動の再読み込みで、焦点を奪わせない ------------------------------------
+  //
+  // 読み込むと自分で入力欄に焦点を移すページ (日経のスマートチャートは DOMContentLoaded の
+  // 直前に検索欄へ focus() する) を自動で読み直すと、別の枠や board で入力中の焦点を奪う。
+  // 読み直す前に board の焦点の場所を控え、読み込みの間にその枠が焦点を取ったら元に戻す。
+  // 元が別の枠なら、iframe に focus() するだけでは中の欄まで戻らないので、その枠の frame.js に
+  // 最後に焦点のあった欄へ戻させる (refocus)。見張るのは、本文ができてから最大 10 秒、
+  // load が来たらその 1 秒後まで。利用者がその枠を押したり打ったりしたら (frame.js が
+  // frame-user-input で知らせる) やめる。読み直す前にその枠自身に焦点があったなら見張らない。
+  // 利用者がその枠を押して焦点が移ったときは、知らせが届く前に見張りが気づくことがある
+  // (押しても元の枠へ引き戻されていた)。焦点が移ったのに気づいてから FOCUS_STEAL_WAIT_MS 待ち、
+  // その間に知らせが来なければ (= ページの都合なら) 戻す。
+
+  // 焦点を戻すまでの一瞬に打った文字は、焦点を取った枠に入ってしまう (日経の横で 0.15 秒おきに
+  // 打つと、読み直し 1 回につき 1 文字欠けた)。そこで読み込みの始め (onCommitted、document_start)
+  // に、ページの focus() を何もしないようにする。利用者がその枠を押すか打つまで、または
+  // BLOCK_FOCUS_MS まで。戻す仕掛けは、差し込みが間に合わなかったときのために残す。
+  const BLOCK_FOCUS_MS = 15000;
+  const BLOCK_FOCUS_CODE = `(() => {
+    const page = window.wrappedJSObject;
+    const until = Date.now() + ${BLOCK_FOCUS_MS};
+    let user = false;
+    const mark = (e) => { if (e.isTrusted) user = true; };
+    window.addEventListener('pointerdown', mark, true);
+    window.addEventListener('keydown', mark, true);
+    for (const name of ['HTMLElement', 'SVGElement']) {
+      const proto = page[name] && page[name].prototype;
+      if (!proto || typeof proto.focus !== 'function') continue;
+      const orig = proto.focus;
+      exportFunction(function (...args) {
+        if (!user && Date.now() < until) return undefined;
+        return orig.call(this, ...args);
+      }, proto, { defineAs: 'focus' });
+    }
+  })()`;
+  const FOCUS_GUARD_AFTER_DCL_MS = 10000;
+  const FOCUS_GUARD_AFTER_LOAD_MS = 1000;
+  const FOCUS_STEAL_WAIT_MS = 60;
+  let focusGuardTimer = null;
+
+  function guardFocus(p) {
+    const prev = document.activeElement;
+    p.focusGuard = prev === p.iframe ? null : { prev, until: Date.now() + LOADING_STALE_MS };
+    if (p.focusGuard && !focusGuardTimer) focusGuardTimer = setInterval(checkFocusGuards, 50);
+  }
+
+  function checkFocusGuards() {
+    const now = Date.now();
+    for (const p of panes) {
+      const g = p.focusGuard;
+      if (!g) continue;
+      if (now > g.until) {
+        p.focusGuard = null;
+        continue;
+      }
+      if (document.activeElement !== p.iframe) {
+        g.stealAt = 0;
+        continue;
+      }
+      if (!g.stealAt) g.stealAt = now;
+      if (now - g.stealAt < FOCUS_STEAL_WAIT_MS) continue;
+      // 読み直した枠がページの都合で焦点を取った。元の場所へ戻す
+      const back = g.prev && g.prev.isConnected ? g.prev : null;
+      if (back && back !== document.body) {
+        back.focus();
+        const q = panes.find((x) => x.iframe === back);
+        const frameId = q ? browser.runtime.getFrameId(q.iframe) : -1;
+        if (frameId >= 0) browser.tabs.sendMessage(tabId, { type: 'refocus' }, { frameId }).catch(() => {});
+      } else {
+        p.iframe.blur();
+      }
+      p.focusGuard = null;
+    }
+    if (!panes.some((p) => p.focusGuard)) {
+      clearInterval(focusGuardTimer);
+      focusGuardTimer = null;
+    }
+  }
+
+  function endFocusGuardSoon(p, ms) {
+    if (p.focusGuard) p.focusGuard.until = Math.min(p.focusGuard.until, Date.now() + ms);
   }
 
   /** ダイアログを開いている間に時刻が来た枠を読み直す */
@@ -499,8 +584,13 @@
       if (!p) return;
       p.loadingSince = 0;
       armAutoReload(p);
+      endFocusGuardSoon(p, FOCUS_GUARD_AFTER_DCL_MS);
     });
   }
+  browser.webNavigation.onCompleted.addListener((d) => {
+    const p = paneOfFrame(d);
+    if (p) endFocusGuardSoon(p, FOCUS_GUARD_AFTER_LOAD_MS);
+  });
   // 枠の文書の要求 (転送されたら転送先の要求) の method を覚え、読み込みが確定したときに見る。
   // 戻る・進むでキャッシュから出たページは要求が無いので、POST ではないとみなす。
   browser.webRequest.onBeforeRequest.addListener(
@@ -518,6 +608,10 @@
     const noHash = (u) => u.split('#')[0];
     p.posted = !!req && req.method === 'POST' && noHash(req.url) === noHash(d.url);
     showAutoReload(p);
+    // 自動の再読み込みで、読み直す前に焦点が無かった枠: ページの focus() を止める
+    if (p.focusGuard && /^https?:/.test(d.url)) {
+      browser.tabs.executeScript(tabId, { frameId: d.frameId, code: BLOCK_FOCUS_CODE, runAt: 'document_start' }).catch(() => {});
+    }
   });
 
   /** 枠の中の履歴を動かす。枠の中は別のサイトなので、差し込んだスクリプトで行う。 */
@@ -941,6 +1035,12 @@
     }
     if (msg.type === 'frame-title') {
       recordTitle(msg, sender);
+      return undefined;
+    }
+    if (msg.type === 'frame-user-input') {
+      // 利用者が枠を押した・打った。その枠の焦点の見張りをやめる
+      const p = sender.tab && sender.tab.id === tabId ? paneByFrameId(sender.frameId) : null;
+      if (p) p.focusGuard = null;
       return undefined;
     }
     if (msg.type === 'frame-scroll') {
