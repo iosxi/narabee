@@ -346,11 +346,13 @@
   // ---- 自動の再読み込み ---------------------------------------------------
   //
   // 枠ごとに間隔 (state.panes[i].reload 秒) を覚え、その枠のページを読み直す。
-  // 次の読み直しまでの時間は、ページの読み込みが終わったところから数え直す
+  // 次の読み直しまでの時間は、ページの本文ができたところ (DOMContentLoaded) から数え直す
   // (読み込みに間隔より長くかかるページを、途中で読み直し続けないため。
   // 枠の中でリンクを押して移ったときも、そこから数え直す)。
+  // 画像や広告まで読み終わる load を待つと、株価や配信のページのように通信が続いて
+  // load が来ないページでは、LOADING_STALE_MS (60 秒) まで読み直さなくなっていた (v15 まで)。
   // 次のときは読み直さず、次の回に回す:
-  // - 枠が空のとき、読み込みの途中のとき
+  // - 枠が空のとき、読み込みの途中 (本文ができる前) のとき
   // - POST で開いたページ (読み直すと Firefox が再送信の確認を出す。送信を繰り返させない)
   // - 枠の中の入力欄に焦点があるとき (打ちかけの文字を消さないため)
   // - 自動の再読み込みのダイアログを開いているとき (どの枠も)。読み込んだページが焦点を
@@ -358,7 +360,7 @@
   //   その間に時刻が来た枠をすぐ読み直す
 
   const RELOAD_MAX_MIN = 1440;
-  /** 読み込みの途中とみなす長さの上限。これを過ぎたら止まっているとみなして読み直す */
+  /** 読み込みの途中 (本文ができる前) とみなす長さの上限。これを過ぎたら止まっているとみなして読み直す */
   const LOADING_STALE_MS = 60000;
   const reloadDialog = document.getElementById('reload-dialog');
   const reloadMin = reloadDialog.querySelector('.rd-min');
@@ -408,7 +410,7 @@
   })()`;
 
   async function autoReload(p) {
-    armAutoReload(p); // 読み込みが終われば、そこから数え直す
+    armAutoReload(p); // 本文ができれば、そこから数え直す
     if (!p.current || p.posted) return;
     if (p.loadingSince && Date.now() - p.loadingSince < LOADING_STALE_MS) return;
     if (popup && popup.el === reloadDialog) {
@@ -480,7 +482,7 @@
     closePopup();
   });
 
-  // 枠のページの読み込みの始まりと終わり、POST で開いたかを追う
+  // 枠のページの読み込みの始まりと本文ができた時点、POST で開いたかを追う
 
   function paneOfFrame(details) {
     if (details.tabId !== tabId || details.frameId === 0) return null;
@@ -491,7 +493,7 @@
     const p = paneOfFrame(d);
     if (p) p.loadingSince = Date.now();
   });
-  for (const ev of [browser.webNavigation.onCompleted, browser.webNavigation.onErrorOccurred]) {
+  for (const ev of [browser.webNavigation.onDOMContentLoaded, browser.webNavigation.onErrorOccurred]) {
     ev.addListener((d) => {
       const p = paneOfFrame(d);
       if (!p) return;
